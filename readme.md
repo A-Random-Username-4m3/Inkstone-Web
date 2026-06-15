@@ -35,5 +35,6 @@ python -m http.server 8080
 
 ## Plans/Todo
 
+- demonstration gifs on readme
 - Also make a Japanese variant
-- Get an instance working somewhere
+- ~~Get an instance working somewhere~~
