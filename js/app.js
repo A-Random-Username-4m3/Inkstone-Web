@@ -1,0 +1,826 @@
+import {
+	DEFAULT_EXTRA_CARDS,
+	DEFAULT_STUDY_EXAMPLE_LIMIT
+} from './constants.js';
+import { $, $$, clamp, escapeHtml, metaRow, sample, setText } from './dom-utils.js';
+import {
+	formatClockDuration,
+	formatDateTimeLocal,
+	formatDebugClockDisplay,
+	formatDebugTimeStatus,
+	formatDuration,
+	formatRelativeDue,
+	parseDateTimeLocalSeconds
+} from './time-format.js';
+import { createStateStore, normalizeBlacklist } from './state-store.js';
+import {
+	DEFAULT_SCHEDULING,
+	configureFsrs,
+	normalizeFsrsParametersText,
+	ensureFsrsState,
+	setEntrySchedulerState
+} from './fsrs.js';
+import { configurePracticeCanvas } from './practice-canvas.js';
+import { createVocabulary } from './vocabulary.js';
+import { createSessionQueue } from './session-queue.js';
+import { createStudyFlow } from './study-flow.js';
+import { createListsUi } from './lists-ui.js';
+import { createSettingsUi } from './settings-ui.js';
+import { createLookupUi } from './lookup-ui.js';
+import { createWordExamples } from './word-examples.js';
+import { createBackupApi } from './backup.js';
+import { createReviewLogStore } from './review-log-store.js';
+import { normalizeScriptMode, rowScriptWord } from './script-mode.js';
+
+const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
+	const STORAGE_KEY = 'inkstone.web.state.v1';
+	const NEXT_CARD_DELAY_MS = 650;
+	const STAGED_CARD_SPACING_TURNS = 1;
+
+	let state = null;
+	const realNow = () => Math.floor(Date.now() / 1000);
+	function debugNowSeconds(settings = state?.settings) {
+		const value = Number(settings?.debugNow);
+		return Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
+	}
+	const now = () => debugNowSeconds() ?? realNow();
+
+	let vocabularyApi = null;
+	let sessionQueueApi = null;
+	let studyFlowApi = null;
+	let listsUiApi = null;
+	let settingsApi = null;
+	let lookupUiApi = null;
+	let wordExamplesApi = null;
+	let backupApi = null;
+
+	// sounds - bound to actions
+	let tabChangeAudio = null;
+	let addBlacklistAudio = null;
+	let restoreBlacklistAudio = null;
+	let correctStrokeAudio = null;
+	let wrongStrokeAudio = null;
+	let fairResultAudio = null;
+	let repeatNextAudio = null;
+	let goodJobAudio = null;
+
+	const stateStore = createStateStore({
+		appVersion: APP_VERSION,
+		storageKey: STORAGE_KEY,
+		defaultScheduling: DEFAULT_SCHEDULING,
+		now,
+		clamp,
+		syncStageQueueToSession: () => sessionQueueApi?.syncStageQueueToSession?.(),
+		setBackupStatus: (message) => setText('#backupStatus', message)
+	});
+	const {
+		freshSession,
+		defaultState,
+		mergeState,
+		loadState,
+		saveState: persistState
+	} = stateStore;
+
+	state = loadState();
+	let hanzi = {};
+	let lists = {};
+	let currentCard = null;
+	let stagedQueue = Array.isArray(state.session?.stageQueue)
+		? state.session.stageQueue
+		: [];
+	let trainer = null;
+	let lookupAnimator = null;
+	let selectedListId = null;
+	let listEditorDrafts = {};
+	let nextCardTimer = null;
+	let reviewLogCount = 0;
+	const pendingReviewLogWrites = new Set();
+	const reviewLogStore = createReviewLogStore({
+		setStatus: (message) => setText('#backupStatus', message)
+	});
+
+
+	async function refreshReviewLogCount() {
+		reviewLogCount = await reviewLogStore.count();
+		return reviewLogCount;
+	}
+
+
+	async function waitForReviewLogWrites() {
+		if (!pendingReviewLogWrites.size) return;
+		await Promise.allSettled([...pendingReviewLogWrites]);
+	}
+
+	function addReviewLog(log) {
+		reviewLogCount += 1;
+		const write = reviewLogStore.add(log).then((saved) => {
+			if (!saved) {
+				reviewLogCount = Math.max(0, reviewLogCount - 1);
+				renderProgress();
+			}
+			backupApi?.renderFsrsOptimizationNotice?.();
+		});
+		pendingReviewLogWrites.add(write);
+		void write.finally(() => pendingReviewLogWrites.delete(write));
+	}
+
+	async function getAllReviewLogs() {
+		await waitForReviewLogWrites();
+		return reviewLogStore.getAll();
+	}
+
+	async function replaceReviewLogs(logs) {
+		await waitForReviewLogWrites();
+		const requestedCount = Array.isArray(logs) ? logs.length : 0;
+		const restoredCount = await reviewLogStore.replaceAll(logs);
+		const ok = Number.isFinite(restoredCount);
+		reviewLogCount = await reviewLogStore.count();
+		backupApi?.renderFsrsOptimizationNotice?.();
+		renderProgress();
+		return {
+			ok,
+			requestedCount,
+			restoredCount: ok ? restoredCount : 0,
+			actualCount: reviewLogCount
+		};
+	}
+
+	async function clearAllReviewLogs() {
+		await waitForReviewLogWrites();
+		const cleared = await reviewLogStore.clear();
+		if (cleared) reviewLogCount = 0;
+		else reviewLogCount = await refreshReviewLogCount();
+		backupApi?.renderFsrsOptimizationNotice?.();
+		renderProgress();
+		return cleared;
+	}
+
+	async function clearReviewLogsForCards(cardIds) {
+		await waitForReviewLogWrites();
+		const deleted = await reviewLogStore.deleteByCardIds(cardIds);
+		if (deleted) reviewLogCount = await refreshReviewLogCount();
+		backupApi?.renderFsrsOptimizationNotice?.();
+		renderProgress();
+		return deleted;
+	}
+
+	function liveObject(getTarget) {
+		return new Proxy(
+			{},
+			{
+				get(_target, property) {
+					return getTarget()?.[property];
+				},
+				set(_target, property, value) {
+					const target = getTarget();
+					if (!target) return false;
+					target[property] = value;
+					return true;
+				},
+				deleteProperty(_target, property) {
+					const target = getTarget();
+					if (!target) return true;
+					delete target[property];
+					return true;
+				},
+				has(_target, property) {
+					return property in (getTarget() || {});
+				},
+				ownKeys() {
+					return Reflect.ownKeys(getTarget() || {});
+				},
+				getOwnPropertyDescriptor(_target, property) {
+					const target = getTarget() || {};
+					const descriptor = Object.getOwnPropertyDescriptor(target, property);
+					if (descriptor) descriptor.configurable = true;
+					return descriptor;
+				}
+			}
+		);
+	}
+
+
+	const appContext = {
+		get state() { return state; },
+		set state(value) { state = value; },
+		get hanzi() { return hanzi; },
+		set hanzi(value) { hanzi = value; },
+		get lists() { return lists; },
+		set lists(value) { lists = value; },
+		get currentCard() { return currentCard; },
+		set currentCard(value) { currentCard = value; },
+		get stagedQueue() { return stagedQueue; },
+		set stagedQueue(value) { stagedQueue = value; },
+		get trainer() { return trainer; },
+		set trainer(value) { trainer = value; },
+		get selectedListId() { return selectedListId; },
+		set selectedListId(value) { selectedListId = value; },
+		get listEditorDrafts() { return listEditorDrafts; },
+		set listEditorDrafts(value) { listEditorDrafts = value; },
+		get nextCardTimer() { return nextCardTimer; },
+		set nextCardTimer(value) { nextCardTimer = value; },
+		liveState: () => liveObject(() => state),
+		liveHanzi: () => liveObject(() => hanzi),
+		liveLists: () => liveObject(() => lists),
+		get lookupAnimator() { return lookupAnimator; },
+		set lookupAnimator(value) { lookupAnimator = value; },
+		APP_VERSION, STORAGE_KEY,
+		get reviewLogCount() { return reviewLogCount; },
+		addReviewLog,
+		getAllReviewLogs,
+		replaceReviewLogs,
+		clearAllReviewLogs,
+		clearReviewLogsForCards,
+		$, $$, setText, now, realNow, debugNowSeconds, clamp, sample, metaRow,
+		playSound, playResultSound,
+		NEXT_CARD_DELAY_MS, STAGED_CARD_SPACING_TURNS,
+		freshSession,
+		defaultState,
+		mergeState,
+		sessionDuration: (...args) => settingsApi.sessionDuration(...args),
+		learningStepInterval: (...args) => settingsApi.learningStepInterval(...args),
+		relearningStepInterval: (...args) => settingsApi.relearningStepInterval(...args),
+		formatDateTimeLocal,
+		formatRelativeDue,
+		formatClockDuration,
+		formatDebugTimeStatus,
+		formatDueSummary,
+		escapeHtml,
+		normalizeBlacklist,
+		ensureFsrsState,
+		setEntrySchedulerState,
+		saveState: (...args) => saveState(...args),
+		renderProgress: (...args) => renderProgress(...args),
+		renderSettings: (...args) => settingsApi.renderSettings(...args),
+		renderFsrsOptimizationNotice: (...args) =>
+			backupApi?.renderFsrsOptimizationNotice?.(...args),
+		parseTsvRows: (...args) => vocabularyApi.parseTsvRows(...args),
+		rowToTsv: (...args) => vocabularyApi.rowToTsv(...args),
+		canStudyWord: (...args) => vocabularyApi.canStudyWord(...args),
+		getEnabledListIds: (...args) => vocabularyApi.getEnabledListIds(...args),
+		getFirstEnabledListId: (...args) => vocabularyApi.getFirstEnabledListId(...args),
+		syncSelectedListForEnabledLists: (...args) => vocabularyApi.syncSelectedListForEnabledLists(...args),
+		applyDefaultListSelection: (...args) => vocabularyApi.applyDefaultListSelection(...args),
+		syncVocabularyWithEnabledLists: (...args) => vocabularyApi.syncVocabularyWithEnabledLists(...args),
+		ensureVocabularyEntry: (...args) => vocabularyApi.ensureVocabularyEntry(...args),
+		getEntryRow: (...args) => vocabularyApi.getEntryRow(...args),
+		resolveCanonicalWord: (...args) => vocabularyApi.resolveCanonicalWord(...args),
+		getActiveVocabulary: (...args) => vocabularyApi.getActiveVocabulary(...args),
+		orderNewItemsByListPosition: (...args) => vocabularyApi.orderNewItemsByListPosition(...args),
+		firstNewByListPosition: (...args) => vocabularyApi.firstNewByListPosition(...args),
+		isActiveStudyWord: (...args) => vocabularyApi.isActiveStudyWord(...args),
+		syncStageQueueToSession: (...args) => sessionQueueApi.syncStageQueueToSession(...args),
+		clearCurrentStageCard: (...args) => sessionQueueApi.clearCurrentStageCard(...args),
+		pruneStagedState: (...args) => sessionQueueApi.pruneStagedState(...args),
+		isWordQueuedForStage: (...args) => sessionQueueApi.isWordQueuedForStage(...args),
+		clearStagedWord: (...args) => sessionQueueApi.clearStagedWord(...args),
+		getDueSets: (...args) => sessionQueueApi.getDueSets(...args),
+		getRemainder: (...args) => sessionQueueApi.getRemainder(...args),
+		resetExpiredSession: (...args) => sessionQueueApi.resetExpiredSession(...args),
+		ageQueuedStageCards: (...args) => sessionQueueApi.ageQueuedStageCards(...args),
+		getQueuedStageCandidates: (...args) => sessionQueueApi.getQueuedStageCandidates(...args),
+		chooseAvailableBucket: (...args) => sessionQueueApi.chooseAvailableBucket(...args),
+		buildPrimaryBuckets: (...args) => sessionQueueApi.buildPrimaryBuckets(...args),
+		orderReviewItems: (...args) => sessionQueueApi.orderReviewItems(...args),
+		lastShownWord: (...args) => sessionQueueApi.lastShownWord(...args),
+		rememberShownWord: (...args) => sessionQueueApi.rememberShownWord(...args),
+		disposeTrainer: (...args) => studyFlowApi.disposeTrainer(...args),
+		setPracticeEmptyState: (...args) => studyFlowApi.setPracticeEmptyState(...args),
+		setStudyControlsEnabled: (...args) => studyFlowApi.setStudyControlsEnabled(...args),
+		clearExternalWordStudyState: (...args) => studyFlowApi.clearExternalWordStudyState(...args),
+		refreshStudyAfterExternalChange: (...args) => studyFlowApi.refreshStudyAfterExternalChange(...args),
+		setFeedbackMessage: (...args) => studyFlowApi.setFeedbackMessage(...args),
+		cancelScheduledNextCard: (...args) => studyFlowApi.cancelScheduledNextCard(...args),
+		nextCard: (...args) => studyFlowApi.nextCard(...args),
+		isMasteredEntry: (...args) => studyFlowApi.isMasteredEntry(...args),
+		setBlacklistedWord: (...args) => listsUiApi.setBlacklistedWord(...args),
+		renderLists: (...args) => listsUiApi.renderLists(...args),
+		renderListEditor: (...args) => listsUiApi.renderListEditor(...args),
+		renderBlacklist: (...args) => listsUiApi.renderBlacklist(...args),
+		refreshListEditorAfterAction: (...args) => listsUiApi.refreshListEditorAfterAction(...args),
+		refreshListEditorDueText: (...args) => listsUiApi.refreshListEditorDueText(...args),
+		refreshVocabularyViews: (...args) => listsUiApi.refreshVocabularyViews(...args),
+		renderStudyExamples: (...args) =>
+			wordExamplesApi?.renderStudyExamples?.(...args),
+		clearStudyExamples: (...args) =>
+			wordExamplesApi?.clearStudyExamples?.(...args),
+		renderLookupExamples: (...args) =>
+			wordExamplesApi?.renderLookupExamples?.(...args),
+		clearLookupExamples: (...args) =>
+			wordExamplesApi?.clearLookupExamples?.(...args)
+	};
+
+	settingsApi = createSettingsUi(appContext);
+	vocabularyApi = createVocabulary(appContext);
+	sessionQueueApi = createSessionQueue(appContext);
+	wordExamplesApi = createWordExamples(appContext);
+	studyFlowApi = createStudyFlow(appContext);
+	listsUiApi = createListsUi(appContext);
+	lookupUiApi = createLookupUi(appContext);
+	backupApi = createBackupApi(appContext);
+
+	configureFsrs({
+		getSettings: () => state?.settings,
+		now,
+		learningStepInterval: (...args) => settingsApi.learningStepInterval(...args),
+		relearningStepInterval: (...args) => settingsApi.relearningStepInterval(...args)
+	});
+
+	const {
+		isActiveStudyWord,
+		parseTsvRows,
+		rowToTsv,
+		canStudyWord,
+		getEnabledListIds,
+		getFirstEnabledListId,
+		syncSelectedListForEnabledLists,
+		applyDefaultListSelection,
+		syncVocabularyWithEnabledLists,
+		ensureVocabularyEntry,
+		getEntryRow,
+		getActiveVocabulary,
+		orderNewItemsByListPosition,
+		firstNewByListPosition
+	} = vocabularyApi;
+	const {
+		syncStageQueueToSession,
+		lastShownWord,
+		rememberShownWord,
+		clearCurrentStageCard,
+		pruneStagedState,
+		isWordQueuedForStage,
+		clearStagedWord,
+		stagedWorkCounts,
+		getDueSets,
+		resetExpiredSession,
+		getRemainder,
+		ageQueuedStageCards,
+		getQueuedStageCandidates,
+		chooseAvailableBucket,
+		buildPrimaryBuckets,
+		orderReviewItems
+	} = sessionQueueApi;
+	const {
+		clearExternalWordStudyState,
+		disposeTrainer,
+		setPracticeEmptyState,
+		setStudyControlsEnabled,
+		setFeedbackMessage,
+		isMasteredEntry,
+		cancelScheduledNextCard,
+		nextCard,
+		renderCharProgress,
+		completeCurrentCard,
+		addExtraCards,
+		blacklistCurrentCard,
+		autoLoadDueCard,
+		refreshStudyAfterExternalChange
+	} = studyFlowApi;
+	const {
+		setBlacklistedWord,
+		refreshVocabularyViews,
+		renderLists,
+		refreshListEditorAfterAction,
+		renderListEditor,
+		renderBlacklist,
+		refreshListEditorDueText
+	} = listsUiApi;
+
+
+	const {
+		sessionDuration,
+		learningStepInterval,
+		relearningStepInterval,
+		renderSettings,
+		updateSetting,
+		updateDebugNow
+	} = settingsApi;
+	const {
+		lookupCharacter,
+		addLookupToPersonalList,
+		pasteDemoList,
+		importCustomList
+	} = lookupUiApi;
+	const {
+		loadStaticData,
+		exportBackup,
+		exportReviewLogs,
+		markFsrsOptimized,
+		snoozeFsrsOptimizationReminder,
+		importBackup,
+		deleteAllData,
+		registerServiceWorker,
+		installApp
+	} = backupApi;
+
+	configurePracticeCanvas({
+		getSettings: () => state?.settings,
+		renderCharProgress,
+		setFeedbackMessage,
+		playSound
+	});
+
+
+	function saveState() {
+		persistState(state);
+	}
+
+	async function init() {
+		initializeAudio();
+		bindUI();
+		registerServiceWorker();
+		await refreshReviewLogCount();
+		await loadStaticData();
+		applyDefaultListSelection();
+		syncVocabularyWithEnabledLists();
+		renderLists();
+		renderBlacklist();
+		renderSettings();
+		renderProgress();
+		nextCard();
+		startSessionTicker();
+		lookupCharacter('三');
+
+	}
+
+	function makeAudio(fileName) {
+		const audio = new Audio(new URL(`../wav/${fileName}`, import.meta.url).href);
+		audio.preload = 'auto';
+		return audio;
+	}
+
+	function playAudio(audio) {
+		if (!audio) return;
+		audio.currentTime = 0;
+		void audio.play().catch(() => {});
+	}
+
+	function playSound(name) {
+		const sounds = {
+			tabChange: tabChangeAudio,
+			addBlacklist: addBlacklistAudio,
+			restoreBlacklist: restoreBlacklistAudio,
+			correctStroke: correctStrokeAudio,
+			wrongStroke: wrongStrokeAudio,
+			fairResult: fairResultAudio,
+			repeatNext: repeatNextAudio,
+			goodJob: goodJobAudio
+		};
+		playAudio(sounds[name]);
+	}
+
+	function playResultSound(result) {
+		if (result === 3) {
+			playSound('repeatNext');
+			return;
+		}
+		if (result === 2) {
+			playSound('fairResult');
+			return;
+		}
+		playSound('goodJob');
+	}
+
+	function initializeAudio() {
+		tabChangeAudio = makeAudio('tabchange.wav');
+		correctStrokeAudio = makeAudio('correctstroke.wav');
+		wrongStrokeAudio = makeAudio('wrongstroke.wav');
+		fairResultAudio = makeAudio('fairresult.wav');
+		goodJobAudio = makeAudio('goodjob.wav');
+		repeatNextAudio = makeAudio('repeatnext.wav');
+		restoreBlacklistAudio = makeAudio('restore.wav');
+		addBlacklistAudio = makeAudio('blacklist.wav');
+	}
+
+	function bindUI() {
+		const bind = (selector, event, handler) => {
+			const node = $(selector);
+			if (node) node.addEventListener(event, handler);
+		};
+
+		$$('.tabs button').forEach((button) =>
+			button.addEventListener('click', () => showTab(button.dataset.tab))
+		);
+		bind('#btnNext', 'click', () => nextCard());
+		bind('#btnHint', 'click', () => trainer?.hint());
+		bind('#btnReveal', 'click', () => trainer?.reveal());
+		bind('#btnUndo', 'click', () => trainer?.undo());
+
+		bind('#btnGradeExcellent', 'click', () => completeCurrentCard(0));
+		bind('#btnGradeGood', 'click', () => completeCurrentCard(1));
+		bind('#btnGradeFair', 'click', () => completeCurrentCard(2));
+		bind('#btnGradeAgain', 'click', () => completeCurrentCard(3));
+		bind('#btnBlacklistCard', 'click', blacklistCurrentCard);
+
+		bind('#btnLookup', 'click', () =>
+			lookupCharacter($('#lookupInput').value.trim()[0], { syncInput: false })
+		);
+		bind('#lookupInput', 'input', (event) =>
+			lookupCharacter(event.target.value.trim()[0], { syncInput: false })
+		);
+		bind('#btnAddPersonal', 'click', addLookupToPersonalList);
+		bind('#btnPasteDemo', 'click', pasteDemoList);
+		bind('#btnImportList', 'click', importCustomList);
+		bind('#btnAddExtraCards', 'click', () =>
+			addExtraCards(
+				Number($('#extraCardCount')?.value) || DEFAULT_EXTRA_CARDS
+			)
+		);
+		bind('#btnResetSession', 'click', () => {
+			state.session = freshSession();
+			stagedQueue = [];
+			currentCard = null;
+			saveState();
+			renderProgress();
+			nextCard();
+		});
+		bind('#btnClearProgress', 'click', async () => {
+			if (
+				!confirm(
+					'Clear vocabulary progress? Imported lists and settings will remain.'
+				)
+			)
+				return;
+			state.vocabulary = {};
+			state.history = [];
+			const reviewLogsCleared = await clearAllReviewLogs();
+			state.fsrsOptimization = defaultState().fsrsOptimization;
+			backupApi?.renderFsrsOptimizationNotice?.();
+			state.session = freshSession();
+			stagedQueue = [];
+			currentCard = null;
+			syncVocabularyWithEnabledLists();
+			saveState();
+			renderProgress();
+			nextCard();
+			if (!reviewLogsCleared) {
+				setText(
+					'#backupStatus',
+					'Vocabulary progress was cleared, but review logs could not be cleared from IndexedDB.'
+				);
+			}
+		});
+
+		bind('#settingRevealOrder', 'change', (e) =>
+			updateSetting('revealOrder', e.target.checked)
+		);
+		bind('#settingSnapStrokes', 'change', (e) =>
+			updateSetting('snapStrokes', e.target.checked)
+		);
+		bind('#settingStage2KeepUserStrokes', 'change', (e) =>
+			updateSetting('stage2KeepUserStrokes', e.target.checked)
+		);
+		bind('#settingStage3KeepUserStrokes', 'change', (e) =>
+			updateSetting('stage3KeepUserStrokes', e.target.checked)
+		);
+		bind('#settingMaxAdds', 'change', (e) =>
+			updateSetting('maxAdds', Math.max(0, Math.floor(Number(e.target.value) || 0)))
+		);
+		bind('#settingMaxReviews', 'change', (e) =>
+			updateSetting('maxReviews', Math.max(0, Math.floor(Number(e.target.value) || 0)))
+		);
+		bind('#settingStudyExampleLimit', 'change', (e) => {
+			const limit = Math.max(
+				1,
+				Math.floor(Number(e.target.value) || DEFAULT_STUDY_EXAMPLE_LIMIT)
+			);
+			updateSetting('studyExampleLimit', limit);
+		});
+		bind('#settingExamplesActiveListsOnly', 'change', (e) => {
+			updateSetting('examplesActiveListsOnly', e.target.checked);
+			if (currentCard)
+				renderCharProgress(
+					trainer?.charIndex || 0,
+					currentCard?.revealedChars || 0
+				);
+			const lookupChar = $('#lookupInput')?.value?.trim()?.[0];
+			if (lookupChar) lookupCharacter(lookupChar, { syncInput: false });
+		});
+		bind('#settingScriptMode', 'change', (e) => {
+			updateSetting('scriptMode', normalizeScriptMode(e.target.value));
+			syncVocabularyWithEnabledLists();
+			pruneStagedState();
+			if (currentCard) {
+				disposeTrainer();
+				currentCard = null;
+				clearCurrentStageCard();
+				syncStageQueueToSession();
+			}
+			renderLists();
+			renderProgress();
+			nextCard();
+		});
+		bind('#settingSessionHours', 'change', (e) =>
+			updateSetting(
+				'sessionHours',
+				Math.max(
+					0.02,
+					Number(e.target.value) || DEFAULT_SCHEDULING.sessionHours
+				)
+			)
+		);
+		bind('#settingDesiredRetention', 'change', (e) =>
+			updateSetting(
+				'desiredRetention',
+				clamp(Number(e.target.value) || 0.9, 0.7, 0.97)
+			)
+		);
+		bind('#settingMaximumIntervalDays', 'change', (e) =>
+			updateSetting(
+				'maximumIntervalDays',
+				Math.max(1, Number(e.target.value) || 36500)
+			)
+		);
+		bind('#settingLearningStepMinutes', 'change', (e) =>
+			updateSetting(
+				'learningStepMinutes',
+				Math.max(1, Number(e.target.value) || 10)
+			)
+		);
+		bind('#settingRelearningStepMinutes', 'change', (e) =>
+			updateSetting(
+				'relearningStepMinutes',
+				Math.max(1, Number(e.target.value) || 10)
+			)
+		);
+		bind('#settingNewCardOrder', 'change', (e) =>
+			updateSetting('newCardOrder', e.target.value)
+		);
+		bind('#settingReviewOrder', 'change', (e) =>
+			updateSetting('reviewOrder', e.target.value)
+		);
+		bind('#settingNewCardsIgnoreReviewLimit', 'change', (e) =>
+			updateSetting('newCardsIgnoreReviewLimit', e.target.checked)
+		);
+		bind('#settingFsrsParameters', 'change', (e) =>
+			updateSetting(
+				'fsrsParameters',
+				normalizeFsrsParametersText(e.target.value)
+			)
+		);
+		bind('#settingDebugNow', 'change', (e) =>
+			updateDebugNow(parseDateTimeLocalSeconds(e.target.value))
+		);
+		bind('#btnDebugNowBrowser', 'click', () => updateDebugNow(realNow()));
+		bind('#btnDebugNowClear', 'click', () => updateDebugNow(null));
+
+
+		bind('#btnBlacklistAdd', 'click', () => {
+			const input = $('#blacklistWordInput');
+			const word = input.value.trim();
+			if (!word) return;
+			setBlacklistedWord(word, true);
+			playSound('addBlacklist');
+			input.value = '';
+			refreshVocabularyViews();
+			nextCard();
+		});
+		bind('#btnBlacklistClear', 'click', () => {
+			if (!confirm('Clear the blacklist?')) return;
+			state.blacklist = {};
+			saveState();
+			refreshVocabularyViews();
+			nextCard();
+		});
+
+		bind('#btnExport', 'click', exportBackup);
+		bind('#btnExportReviewLogs', 'click', exportReviewLogs);
+		bind('#btnMarkFsrsOptimized', 'click', markFsrsOptimized);
+		bind(
+			'#btnSnoozeFsrsOptimization',
+			'click',
+			snoozeFsrsOptimizationReminder
+		);
+		bind('#importBackup', 'change', importBackup);
+		bind('#btnDeleteAllData', 'click', deleteAllData);
+		bind('#btnInstallApp', 'click', installApp);
+	}
+
+	function showTab(tab) {
+		playSound('tabChange');
+
+		$$('.tabs button').forEach((b) =>
+			b.classList.toggle('active', b.dataset.tab === tab)
+		);
+		$$('.tab-panel').forEach((p) =>
+			p.classList.toggle('active', p.id === `tab-${tab}`)
+		);
+		if (tab === 'progress') renderProgress();
+		if (tab === 'lists') {
+			renderLists();
+			renderBlacklist();
+		}
+		if (tab === 'settings') renderSettings();
+	}
+
+	function getSessionTimeLeft() {
+		resetExpiredSession();
+		return Math.max(0, state.session.started + sessionDuration() - now());
+	}
+
+	function getNextScheduledReview(sets = getDueSets()) {
+		const t = now();
+		const candidates = sets.active
+			.filter((entry) => entry.attempts && entry.next && entry.next > t)
+			.sort((a, b) => a.next - b.next);
+		return candidates[0] || null;
+	}
+
+	function formatDueSummary(sets = getDueSets(), left = getRemainder(sets)) {
+		const parts = [];
+		const staged = stagedWorkCounts();
+		if (left.adds) parts.push(`${left.adds} new`);
+		if (left.reviews) parts.push(`${left.reviews} review due now`);
+		if (left.steps)
+			parts.push(`${left.steps} learning steps due`);
+		if (left.extras) parts.push(`${left.extras} extra`);
+		if (staged.total)
+			parts.push(
+				`${staged.total} staged review${staged.total === 1 ? '' : 's'}`
+			);
+
+		const next = getNextScheduledReview(sets);
+		if (next) {
+			const wait = Math.max(0, (next.next || 0) - now());
+			const displayWord = rowScriptWord(getEntryRow(next.word), state.settings) || next.word;
+			parts.push(
+				`Next review: ${displayWord} in ${formatClockDuration(wait)}`
+			);
+		} else if (!left.reviews && !left.steps && !staged.total) {
+			parts.push(
+				sets.active.length
+					? 'No scheduled reviews waiting'
+					: 'No active words'
+			);
+		}
+
+		return parts.join(' · ');
+	}
+
+	function startSessionTicker() {
+		renderSessionStatus();
+		setInterval(() => {
+			renderSessionStatus();
+			autoLoadDueCard();
+		}, 1000);
+	}
+
+	function renderSessionStatus(sets = null, left = null) {
+		sets = sets || getDueSets();
+		left = left || getRemainder(sets);
+		const timeLeft = formatDuration(getSessionTimeLeft(), true);
+		const staged = stagedWorkCounts();
+		const plannedCount =
+			left.adds + left.reviews + left.extras + left.steps + staged.total;
+		const stagedText = staged.total
+			? ` · ${staged.total} staged`
+			: '';
+		const debugPrefix = debugNowSeconds() == null
+			? ''
+			: `DEBUG ${formatDebugClockDisplay(now())} · `;
+		const text =
+			`${debugPrefix}${timeLeft} left · ${plannedCount} planned${stagedText}`;
+		if ($('#sessionTimeLeft')) $('#sessionTimeLeft').textContent = text;
+		if ($('#sessionRemainder'))
+			$('#sessionRemainder').textContent =
+				`${left.adds} new · ${left.reviews} review · ${left.extras} extra · ${left.steps} step`;
+		if ($('#dueSummary'))
+			$('#dueSummary').textContent = formatDueSummary(sets, left);
+		if (selectedListId) refreshListEditorDueText();
+	}
+
+
+	function renderProgress() {
+		const sets = getDueSets();
+		const left = getRemainder(sets);
+		const mastered = sets.active.filter((x) => isMasteredEntry(x)).length;
+		const stats = [
+			[sets.active.length, 'active words'],
+			[left.adds, 'new left'],
+			[left.reviews, 'reviews left'],
+			[left.extras, 'extra left'],
+			[left.steps, 'learning steps due'],
+			[formatDuration(getSessionTimeLeft(), true), 'session time left'],
+			[mastered, 'strong recall'],
+			[Object.keys(state.blacklist || {}).length, 'blacklisted'],
+			[state.history.length, 'recent attempts'],
+			[reviewLogCount, 'review log rows']
+		];
+		const grid = $('#progressStats');
+		if (grid) {
+			grid.innerHTML = '';
+			for (const [value, label] of stats) {
+				const node =
+					$('#statTemplate').content.firstElementChild.cloneNode(
+						true
+					);
+				$('strong', node).textContent = value;
+				$('span', node).textContent = label;
+				grid.appendChild(node);
+			}
+		}
+		renderSessionStatus(sets, left);
+	}
+
+
+	window.addEventListener('DOMContentLoaded', init);

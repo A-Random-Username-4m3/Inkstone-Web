@@ -1,0 +1,10 @@
+{
+	"nhsk1":{"category": "NHSK", "name": "NHSK 1", "path": "data/lists/nhsk1.tsv"},
+	"100cr":{"category": "Radicals", "name": "100 Radicals", "path": "data/lists/100cr.tsv"},
+	"nhsk2":{"category": "NHSK", "name": "NHSK 2", "path": "data/lists/nhsk2.tsv"},
+	"nhsk3":{"category": "NHSK", "name": "NHSK 3", "path": "data/lists/nhsk3.tsv"},
+	"nhsk4":{"category": "NHSK", "name": "NHSK 4", "path": "data/lists/nhsk4.tsv"},
+	"nhsk5":{"category": "NHSK", "name": "NHSK 5", "path": "data/lists/nhsk5.tsv"},
+	"nhsk6":{"category": "NHSK", "name": "NHSK 6", "path": "data/lists/nhsk6.tsv"},
+	"demo": {"category": "Demo", "name": "Demo: 三 上 下", "path": "data/lists/demo.tsv"}
+}
