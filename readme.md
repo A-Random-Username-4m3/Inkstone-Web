@@ -1,16 +1,23 @@
 # Inkstone Web Version
 
+
+
 This is a web application version of the [Inkstone project](https://github.com/skishore/inkstone). 
 
 To be honest, I couldn't get the app to work on my phone so I couldn't even test it, so that's when I had the bright idea to port it to the web. 
 
 We also added additional features, namely an FSRS scheduler algorithm.
 
-Inkstone Web Version can work locally cached, and so you can learn Chinese on the go even when disconnected from the internet.
+Inkstone Web Version can work locally cached, and so you can learn Chinese on the go even when disconnected from the internet. Yes, **this works offline too!**
 
 Currently, this project is in Alpha, **PLEASE EXPECT SAVES TO POSSIBLY BECOME BROKEN IN FUTURE/DIFFERENT VERSIONS**. Backwards compatibility is __not to be expected__ until the application is stable.
 
 We hope that you have fun learning Chinese vocabulary with our program!
+
+### Check it out here!: https://a-random-username-4m3.github.io/Inkstone-Web/
+
+| ![](demo-computer.gif) | ![](demo-phoon.gif) |
+|------------------------|---------------------|
 
 ## Character data generation
 
@@ -35,6 +42,7 @@ python -m http.server 8080
 
 ## Plans/Todo
 
-- demonstration gifs on readme
+- find bugs
 - Also make a Japanese variant
+- ~~demonstration gifs on readme~~
 - ~~Get an instance working somewhere~~
