@@ -166,6 +166,7 @@ export function createLookupUi(ctx) {
 
 	return {
 		lookupCharacter,
+		stopLookupAnimation,
 		addLookupToPersonalList,
 		pasteDemoList,
 		importCustomList

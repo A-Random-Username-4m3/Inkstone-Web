@@ -43,8 +43,18 @@ function allStrokeIndices(character) {
 }
 
 function cachePath(key, path) {
-	if (pathCache.size >= PATH_CACHE_LIMIT) pathCache.clear();
+	if (pathCache.has(key)) {
+		pathCache.delete(key);
+	}
+
 	pathCache.set(key, path);
+
+	while (pathCache.size > PATH_CACHE_LIMIT) {
+		const oldestKey = pathCache.keys().next().value;
+		if (oldestKey === undefined) break;
+		pathCache.delete(oldestKey);
+	}
+
 	return path;
 }
 
@@ -57,6 +67,7 @@ export class PracticeCanvas {
 		this.stage = card?.stage || 1;
 		this.previewTimer = null;
 		this.animationFrame = null;
+		this.drawFrame = null;
 		this.disposed = false;
 		this.lastTap = 0;
 		this.resetCardState();
@@ -194,11 +205,16 @@ export class PracticeCanvas {
 			this.waitingForContinue
 		)
 			return;
+
 		event.preventDefault();
+
 		const point = this.pointFromEvent(event);
 		const last = this.currentStroke[this.currentStroke.length - 1];
-		if (distance(last, point) > 0.004) this.currentStroke.push(point);
-		this.draw();
+
+		if (distance(last, point) <= 0.004) return;
+
+		this.currentStroke.push(point);
+		this.requestDraw();
 	}
 	pointerCancel() {
 		if (this.disposed || !this.currentStroke.length) return;
@@ -543,12 +559,24 @@ export class PracticeCanvas {
 			cancelAnimationFrame(this.animationFrame);
 			this.animationFrame = null;
 		}
+		if (this.drawFrame) {
+			cancelAnimationFrame(this.drawFrame);
+			this.drawFrame = null;
+		}
 		this.effects = [];
 		this.animating = false;
 		this.canvas.onpointerdown = null;
 		this.canvas.onpointermove = null;
 		this.canvas.onpointerup = null;
 		this.canvas.onpointercancel = null;
+	}
+	requestDraw() {
+		if (this.disposed || this.drawFrame || this.animating) return;
+
+		this.drawFrame = requestAnimationFrame(() => {
+			this.drawFrame = null;
+			this.draw();
+		});
 	}
 	requestAnimation() {
 		if (this.disposed || this.animating) return;
@@ -849,7 +877,13 @@ function getCachedPath(ctx, path) {
 	const height = ctx.canvas.height;
 	const key = `${width}x${height}:${path}`;
 	const cached = pathCache.get(key);
-	if (cached) return cached;
+	if (cached) {
+		// Refresh its position so recently used paths are evicted last.
+		pathCache.delete(key);
+		pathCache.set(key, cached);
+		return cached;
+	}
+	
 	const p = new Path2D();
 	const tokens = path.match(/[A-Za-z]|-?\d+(?:\.\d+)?/g) || [];
 	let i = 0;

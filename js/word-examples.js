@@ -31,14 +31,12 @@ function markRowWordsSeen(row, seenWords, displayWord = '') {
 	if (displayWord) seenWords.add(displayWord);
 }
 
-function matchesExcludedWord(row, excludeWords) {
-	const excluded = new Set(
+function makeExcludedWordSet(row, excludeWords) {
+	return new Set(
 		(Array.isArray(excludeWords) ? excludeWords : [excludeWords])
 			.map(textValue)
 			.filter(Boolean)
 	);
-	if (!excluded.size) return false;
-	return rowWords(row).some((word) => excluded.has(word));
 }
 
 function shuffle(items) {
@@ -75,27 +73,52 @@ export function createWordExamples(ctx) {
 			excludeWords = excludeWord ? [excludeWord] : [],
 			max = DEFAULT_STUDY_EXAMPLE_LIMIT
 		} = options;
+
+		const targetCharacter = String(character || '');
 		const examples = [];
 		const seenWords = new Set();
+		const excludedWords = makeExcludedWordSet(excludeWords);
 		const activeListsOnly = !!state.settings?.examplesActiveListsOnly;
+
 		for (const [listId, list] of Object.entries(lists || {})) {
 			if (activeListsOnly && !state.enabledLists?.[listId]) continue;
+
 			for (const row of list?.rows || []) {
-				if (rowHasSeenWord(row, seenWords)) continue;
-				if (matchesExcludedWord(row, excludeWords)) continue;
-				if (!rowContainsCharacter(row, character)) continue;
-				const word = chooseDisplayWord(row, character);
-				if (!word || !isCompoundWord(word)) continue;
-				markRowWordsSeen(row, seenWords, word);
+				const words = rowWords(row);
+
+				if (!words.length) continue;
+				if (words.some((word) => seenWords.has(word))) continue;
+				if (words.some((word) => excludedWords.has(word))) continue;
+
+				const displayWord =
+					words.find((word) => chars(word).includes(targetCharacter)) ||
+					words[0] ||
+					'';
+
+				if (
+					!displayWord ||
+					!chars(displayWord).includes(targetCharacter) ||
+					!isCompoundWord(displayWord)
+				) {
+					continue;
+				}
+
+				for (const word of words) {
+					seenWords.add(word);
+				}
+				seenWords.add(displayWord);
+
 				examples.push({
-					word,
+					word: displayWord,
 					pinyin: row?.pinyin || row?.numbered || '',
 					definition: row?.definition || ''
 				});
 			}
 		}
+
 		const randomized = shuffle(examples);
 		const limit = Number(max);
+
 		return Number.isFinite(limit) && limit > 0 && randomized.length > limit
 			? randomized.slice(0, Math.floor(limit))
 			: randomized;

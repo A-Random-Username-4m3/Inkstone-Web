@@ -397,6 +397,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 	} = settingsApi;
 	const {
 		lookupCharacter,
+		stopLookupAnimation,
 		addLookupToPersonalList,
 		pasteDemoList,
 		importCustomList
@@ -439,8 +440,6 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		renderProgress();
 		nextCard();
 		startSessionTicker();
-		lookupCharacter('三');
-
 	}
 
 	function makeAudio(fileName) {
@@ -697,19 +696,30 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 	}
 
 	function showTab(tab) {
-		playSound('tabChange');
+	playSound('tabChange');
 
-		$$('.tabs button').forEach((b) =>
-			b.classList.toggle('active', b.dataset.tab === tab)
+		$$('.tabs button').forEach((button) =>
+			button.classList.toggle('active', button.dataset.tab === tab)
 		);
-		$$('.tab-panel').forEach((p) =>
-			p.classList.toggle('active', p.id === `tab-${tab}`)
+
+		$$('.tab-panel').forEach((panel) =>
+			panel.classList.toggle('active', panel.id === `tab-${tab}`)
 		);
+
+		if (tab === 'browse') {
+			const character = $('#lookupInput')?.value.trim()[0] || '三';
+			lookupCharacter(character, { syncInput: false });
+		} else {
+			stopLookupAnimation();
+		}
+
 		if (tab === 'progress') renderProgress();
+
 		if (tab === 'lists') {
 			renderLists();
 			renderBlacklist();
 		}
+
 		if (tab === 'settings') renderSettings();
 	}
 
@@ -786,7 +796,12 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 				`${left.adds} new · ${left.reviews} review · ${left.extras} extra · ${left.steps} step`;
 		if ($('#dueSummary'))
 			$('#dueSummary').textContent = formatDueSummary(sets, left);
-		if (selectedListId) refreshListEditorDueText();
+		
+		const listsTabVisible = 
+			document.querySelector('#tab-lists')?.classList.contains('active');
+		if (selectedListId && listsTabVisible) {
+			refreshListEditorDueText();
+		}
 	}
 
 
