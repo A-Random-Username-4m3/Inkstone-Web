@@ -1,4 +1,4 @@
-const CACHE_NAME = 'inkstone-static-a0.2.10.2';
+const CACHE_NAME = 'inkstone-static-a0.2.10.3';
 const CORE_ASSETS = [
 	'./',
 	'./index.html',
@@ -22,10 +22,7 @@ const CORE_ASSETS = [
 	'./js/backup.js',
 	'./js/review-log-store.js',
 	'./js/script-mode.js',
-	'./manifest.webmanifest'
-];
-
-const OPTIONAL_ASSETS = [
+	'./manifest.webmanifest',
 	'./data/hanzi.json',
 	'./data/lists.json',
 	'./data/lists/nhsk1.tsv',
@@ -35,7 +32,10 @@ const OPTIONAL_ASSETS = [
 	'./data/lists/nhsk4.tsv',
 	'./data/lists/nhsk5.tsv',
 	'./data/lists/nhsk6.tsv',
-	'./data/lists/demo.tsv',
+	'./data/lists/demo.tsv'
+];
+
+const OPTIONAL_ASSETS = [
 	'./icons/brand-mark.png',
 	'./icons/icon-72.png',
 	'./icons/icon-96.png',
