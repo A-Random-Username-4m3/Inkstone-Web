@@ -793,7 +793,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		if ($('#sessionTimeLeft')) $('#sessionTimeLeft').textContent = text;
 		if ($('#sessionRemainder'))
 			$('#sessionRemainder').textContent =
-				`${left.adds} new · ${left.reviews} review · ${left.extras} extra · ${left.steps} step`;
+				`Available now: ${left.adds} new · ${left.reviews} review · ${left.extras} extra · ${left.steps} step`;
 		if ($('#dueSummary'))
 			$('#dueSummary').textContent = formatDueSummary(sets, left);
 		

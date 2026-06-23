@@ -76,8 +76,8 @@ export function createStateStore({
 		settings: {
 			revealOrder: true,
 			snapStrokes: true,
-			maxAdds: 10,
-			maxReviews: 50,
+			maxAdds: 5,
+			maxReviews: 10,
 			studyExampleLimit: DEFAULT_STUDY_EXAMPLE_LIMIT,
 			examplesActiveListsOnly: false,
 			scriptMode: 'simplified',
