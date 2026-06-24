@@ -31,14 +31,6 @@ function markRowWordsSeen(row, seenWords, displayWord = '') {
 	if (displayWord) seenWords.add(displayWord);
 }
 
-function makeExcludedWordSet(row, excludeWords) {
-	return new Set(
-		(Array.isArray(excludeWords) ? excludeWords : [excludeWords])
-			.map(textValue)
-			.filter(Boolean)
-	);
-}
-
 function shuffle(items) {
 	const shuffled = items.slice();
 	for (let i = shuffled.length - 1; i > 0; i -= 1) {
@@ -69,15 +61,16 @@ export function createWordExamples(ctx) {
 
 	function getCharacterExamples(character, options = {}) {
 		const {
-			excludeWord = '',
-			excludeWords = excludeWord ? [excludeWord] : [],
+			excludeWords = [],
 			max = DEFAULT_STUDY_EXAMPLE_LIMIT
 		} = options;
 
+		const excludedWords = new Set(
+			excludeWords.map(textValue).filter(Boolean)
+		);
 		const targetCharacter = String(character || '');
 		const examples = [];
 		const seenWords = new Set();
-		const excludedWords = makeExcludedWordSet(excludeWords);
 		const activeListsOnly = !!state.settings?.examplesActiveListsOnly;
 
 		for (const [listId, list] of Object.entries(lists || {})) {
@@ -88,7 +81,7 @@ export function createWordExamples(ctx) {
 
 				if (!words.length) continue;
 				if (words.some((word) => seenWords.has(word))) continue;
-				if (words.some((word) => excludedWords.has(word))) continue;
+				if (words.some((word) => excludedWords.has(textValue(word)))) continue;
 
 				const displayWord =
 					words.find((word) => chars(word).includes(targetCharacter)) ||
@@ -178,7 +171,7 @@ export function createWordExamples(ctx) {
 		const container = $('#lookupExamples');
 		if (!container) return;
 		const examples = getCharacterExamples(character, {
-			excludeWord: '',
+			excludeWords: [],
 			max: null
 		});
 		if (!character || !examples.length) {
