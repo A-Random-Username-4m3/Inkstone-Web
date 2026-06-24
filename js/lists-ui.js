@@ -188,6 +188,11 @@ export function createListsUi(ctx) {
 	function renderListEditor(scrollIntoView = false) {
 		const panel = $('#listWordEditor');
 		if (!panel) return;
+
+		const previousBody = panel.querySelector('.word-editor-body');
+		const previousScrollTop = previousBody?.scrollTop || 0;
+		const previousScrollLeft = previousBody?.scrollLeft || 0;
+
 		captureListEditorDrafts(panel);
 		syncSelectedListForEnabledLists();
 		const card = panel.closest('.card');
@@ -307,6 +312,12 @@ export function createListsUi(ctx) {
 				refreshListEditorAfterAction(statusMessage);
 			});
 		});
+
+		const nextBody = panel.querySelector('.word-editor-body');
+		if (nextBody && !scrollIntoView) {
+			nextBody.scrollTop = previousScrollTop;
+			nextBody.scrollLeft = previousScrollLeft;
+		}
 
 		if (scrollIntoView) panel.scrollIntoView({ block: 'nearest' });
 	}
