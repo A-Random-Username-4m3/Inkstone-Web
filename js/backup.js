@@ -54,7 +54,7 @@ export function createBackupApi(ctx) {
 
 	async function fetchJson(url, fallback) {
 		try {
-			const response = await fetch(url, { cache: 'no-cache' });
+			const response = await fetch(url);
 			if (!response.ok)
 				throw new Error(`${response.status} ${response.statusText}`);
 			return await response.json();
@@ -65,7 +65,7 @@ export function createBackupApi(ctx) {
 	}
 
 	async function fetchText(url) {
-		const response = await fetch(url, { cache: 'no-cache' });
+		const response = await fetch(url);
 		if (!response.ok)
 			throw new Error(`${response.status} ${response.statusText}`);
 		return await response.text();
