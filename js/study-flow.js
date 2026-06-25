@@ -319,15 +319,45 @@ export function createStudyFlow(ctx) {
 		};
 	}
 
-
-	function nextCard() {
+	function nextCard(shouldSkip = false) {
 		cancelScheduledNextCard();
 		if (ctx.currentCard) {
-			setFeedbackMessage(
-				'Finish or grade the current stage before moving to another card.',
-				'warning'
+			if (
+				shouldSkip &&
+				ctx.trainer?.isCardCompleteAwaitingContinue?.()
+			) {
+				ctx.trainer.continueAfterCharacter();
+				return;
+			}
+			if (!shouldSkip) {
+				setFeedbackMessage(
+					'Finish or grade the current stage before moving to another card.',
+					'warning'
+				);
+				return;
+			}
+			const word = ctx.currentCard.word || ctx.currentCard.entry?.word;
+			disposeTrainer();
+
+			ctx.stagedQueue = ctx.stagedQueue.filter(
+				(item) => item.word !== word
 			);
-			return;
+
+			ctx.stagedQueue.push({
+				word,
+				deck: ctx.currentCard.deck,
+				stage: ctx.currentCard.stage,
+				attemptResult: ctx.currentCard.attemptResult ?? null,
+				forceSequential: !!ctx.currentCard.forceSequential,
+				sawAgain: !!ctx.currentCard.sawAgain,
+				delay: STAGED_CARD_SPACING_TURNS
+			});
+
+			ctx.currentCard = null;
+			clearCurrentStageCard();
+			syncStageQueueToSession();
+			saveState();
+
 		}
 
 		syncVocabularyWithEnabledLists();
@@ -428,6 +458,8 @@ export function createStudyFlow(ctx) {
 
 
 	function renderCurrentCard() {
+		if (!ctx.currentCard) return;
+		rememberShownWord(ctx.currentCard.word);
 		const { deck, row, characters, stage } = ctx.currentCard;
 		$('#deckName').textContent =
 			`${deckLabel(deck)} · ${stageLabel(stage)}`;

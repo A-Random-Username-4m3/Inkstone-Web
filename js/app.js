@@ -500,7 +500,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		$$('.tabs button').forEach((button) =>
 			button.addEventListener('click', () => showTab(button.dataset.tab))
 		);
-		bind('#btnNext', 'click', () => nextCard());
+		bind('#btnNext', 'click', () => nextCard(true));
 		bind('#btnHint', 'click', () => trainer?.hint());
 		bind('#btnReveal', 'click', () => trainer?.reveal());
 		bind('#btnUndo', 'click', () => trainer?.undo());

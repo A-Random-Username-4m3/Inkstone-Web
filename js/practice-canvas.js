@@ -417,6 +417,13 @@ export class PracticeCanvas {
 		this.waitingForContinue = false;
 		this.nextCharacterOrComplete();
 	}
+	isCardCompleteAwaitingContinue() {
+		return Boolean(
+			this.waitingForContinue &&
+			this.card?.characters?.length &&
+			this.charIndex === this.card.characters.length - 1
+		);
+	}
 
 	nextCharacterOrComplete() {
 		this.charIndex += 1;
