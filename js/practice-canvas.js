@@ -483,22 +483,36 @@ export class PracticeCanvas {
 		}
 	}
 	hint() {
-		if (!this.character || !this.missing.length || this.waitingForContinue)
+		if (
+			!this.character ||
+			!this.missing.length ||
+			this.waitingForContinue
+		) {
 			return;
+		}
 
 		if (this.waitingForStart) {
 			this.beginDrawing();
 		}
 
+		const nextStrokeIndex = this.missing[0];
+		const isNewHint =
+			this.guidedStrokeIndex !== nextStrokeIndex;
+
 		if (!this.showNextStrokeGuide()) return;
 
-		if (this.stage === 2 || this.stage === 3) {
+		if (
+			isNewHint &&
+			(this.stage === 2 || this.stage === 3)
+		) {
 			this.penalties += 1;
 		}
 
 		this.setFeedback(
-			'Next-stroke hint shown. Use Hint again after completing it.',
-			'warning'
+			isNewHint
+				? 'Next-stroke hint shown. Use Hint again after completing it.'
+				: 'This stroke is already being shown.',
+			isNewHint ? 'warning' : 'info'
 		);
 	}
 	reveal() {

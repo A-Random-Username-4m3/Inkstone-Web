@@ -75,6 +75,7 @@ export function createStateStore({
 		version: appVersion,
 		settings: {
 			revealOrder: true,
+			showManualGrading: true,
 			snapStrokes: true,
 			maxAdds: 5,
 			maxReviews: 10,
@@ -149,6 +150,8 @@ export function createStateStore({
 			);
 			base.settings.examplesActiveListsOnly =
 				!!base.settings.examplesActiveListsOnly;
+			base.settings.showManualGrading =
+				base.settings.showManualGrading !== false;
 			base.settings.scriptMode = normalizeScriptMode(
 				base.settings.scriptMode
 			);
