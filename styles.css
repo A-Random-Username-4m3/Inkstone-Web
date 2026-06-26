@@ -921,10 +921,17 @@ input[type="checkbox"] {
 }
 .word-editor-row {
 	display: grid;
-	grid-template-columns: minmax(118px, 1.05fr) minmax(115px, .8fr) minmax(170px, 1.15fr) minmax(185px, 1.35fr) minmax(105px, .7fr) minmax(205px, 1.25fr);
-	gap: 6px;
+	grid-template-columns:
+		minmax(96px, .8fr)
+		minmax(92px, .62fr)
+		minmax(145px, .88fr)
+		minmax(165px, 1fr)
+		minmax(130px, .72fr)
+		minmax(224px, 1.15fr);
+	gap: 4px;
 	align-items: center;
-	padding: 5px 6px;
+	min-width: 882px;
+	padding: 2px 5px;
 	border-top: 1px solid rgba(56, 101, 141, .16);
 	background:
 		linear-gradient(180deg, rgba(255,255,255,.86), rgba(239,248,253,.54));
@@ -961,6 +968,23 @@ input[type="checkbox"] {
 	color: #4f677b;
 	font-size: 11px;
 }
+.word-cell small {
+	display: block;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.word-status-cell,
+.word-stats-cell {
+	min-width: 0;
+}
+.word-stats-cell small {
+	display: block;
+	white-space: nowrap;
+	overflow: visible;
+	text-overflow: clip;
+}
 .next-review-cell {
 	display: grid;
 	gap: 4px;
@@ -973,15 +997,17 @@ input[type="checkbox"] {
 .inline-mini {
 	display: flex;
 	align-items: center;
-	gap: 4px;
+	gap: 3px;
+	min-width: 0;
 }
 .inline-mini input {
-	width: 58px;
-	padding: 3px 5px;
+	width: 46px;
+	min-width: 0;
+	padding: 3px 4px;
 }
 .inline-mini select,
 .word-editor-row select {
-	width: 100%;
+	width: 95%;
 	min-height: 24px;
 	padding: 3px 5px;
 	border: 1px solid #7a9cb5;
@@ -992,18 +1018,24 @@ input[type="checkbox"] {
 	font-size: 12px;
 }
 .inline-mini select {
-	width: 66px;
+	width: 56px;
 }
 .inline-mini button,
 .word-actions button {
 	min-height: 22px;
-	padding: 3px 6px 4px;
+	padding: 3px 4px 4px;
 	font-size: 11px;
 }
 .word-actions {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 4px;
+	flex-wrap: nowrap;
+	gap: 3px;
+	min-width: 0;
+}
+.word-actions button {
+	flex: 0 0 auto;
+	min-width: 0;
+	white-space: nowrap;
 }
 
 .fsrs-debug-cell {
@@ -1064,6 +1096,7 @@ input[type="checkbox"] {
 	background: rgba(255,255,255,.48);
 }
 .word-editor-body {
+	--word-editor-row-height: 46px;
 	position: relative;
 	max-height: 470px;
 	overflow: auto;
@@ -1081,6 +1114,11 @@ input[type="checkbox"] {
 	left: 0;
 	right: 0;
 	will-change: transform;
+}
+.word-editor-visible-rows .word-editor-row {
+	height: var(--word-editor-row-height);
+	box-sizing: border-box;
+	overflow: hidden;
 }
 .word-editor-empty {
 	margin: 0;
@@ -1168,13 +1206,57 @@ input[type="checkbox"] {
 		gap: 4px;
 	}
 	.list-editor-search small { white-space: normal; }
-	.word-editor-body { max-height: 390px; }
+	.word-editor-body {
+		--word-editor-row-height: 155px;
+		max-height: 390px;
+	}
 	.word-editor-row {
-		grid-template-columns: 1fr;
-		gap: 4px;
+		grid-template-columns: minmax(0, 1.35fr) minmax(132px, .95fr);
+		grid-template-areas:
+			"word status"
+			"next stats"
+			"fsrs fsrs"
+			"actions actions";
+		gap: 2px 6px;
+		min-width: 0;
+		padding: 8px 6px;
 	}
 	.word-editor-head { display: none; }
-	.word-actions button { flex: 1 1 auto; }
+	.word-cell { grid-area: word; }
+	.word-status-cell { grid-area: status; }
+	.next-review-cell { 
+		grid-area: next;
+		min-width: 0;
+	}
+	.fsrs-debug-cell { 
+		grid-area: fsrs; 
+		min-width: 0
+	}
+	.word-stats-cell { 
+		grid-area: stats; 
+		align-self: end;
+		justify-self: end;
+		min-width: 0;
+		text-align: right;
+	}
+	.word-stats-cell small { 
+		display: block;
+		white-space: nowrap;
+		overflow: visible;
+		text-overflow: clip;
+	}
+	.word-actions { grid-area: actions; }
+	.fsrs-debug {
+		grid-template-columns: max-content max-content;
+		justify-content: start;
+		column-gap: 7px;
+	}
+	.fsrs-debug span {
+		overflow: visible;
+		text-overflow: clip;
+	}
+	.fsrs-debug span:nth-child(3) { grid-column: 1 / -1; }
+	.word-actions button { flex: 1 1 0; }
 	.backup-actions { grid-template-columns: 1fr; }
 	.backup-danger { justify-content: flex-start; }
 }
@@ -1436,4 +1518,68 @@ input[type="checkbox"] {
 		margin-top: 2px;
 	}
 	#tab-study.active #addExtraCardsPanel { order: 11; }
+}
+
+.word-actions button,
+.inline-mini button,
+.grade-grid button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	line-height: 0;
+}
+
+.word-actions button,
+.inline-mini button {
+	height: 24px;
+	min-height: 24px;
+	padding-top: 0;
+	padding-bottom: 0;
+}
+
+.grade-grid button {
+	height: 26px;
+	min-height: 26px;
+	padding-top: 0;
+	padding-bottom: 0;
+}
+
+.inline-mini input,
+.inline-mini select,
+.word-editor-row select {
+	height: 24px;
+	min-height: 24px;
+	box-sizing: border-box;
+	font: inherit;
+}
+
+.inline-mini input {
+	padding-top: 0;
+	padding-bottom: 0;
+	line-height: 22px;
+}
+
+.inline-mini select,
+.word-editor-row select {
+	padding-top: 0;
+	padding-bottom: 0;
+	line-height: normal;
+}
+
+@media (max-width: 820px) and (orientation: portrait) {
+	.word-actions button {
+		height: 24px;
+		min-height: 24px;
+		padding: 0 4px;
+		line-height: 1;
+	}
+
+	#tab-study.active .button-row button,
+	#tab-study.active .grade-grid button {
+		height: 26px;
+		min-height: 26px;
+		padding-top: 0;
+		padding-bottom: 0;
+	}
 }

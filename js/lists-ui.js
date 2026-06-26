@@ -38,15 +38,11 @@ export function createListsUi(ctx) {
 	const relearningStepInterval = (...args) => ctx.relearningStepInterval(...args);
 	const nextCard = (...args) => ctx.nextCard(...args);
 	const playSound = (...args) => ctx.playSound?.(...args);
-	const LIST_EDITOR_OVERSCAN_PX = 280;
-	const LIST_EDITOR_DESKTOP_ESTIMATED_ROW_HEIGHT = 54;
-	const LIST_EDITOR_MOBILE_ESTIMATED_ROW_HEIGHT = 190;
+	const LIST_EDITOR_OVERSCAN_ROWS = 6;
 	let listEditorSearchListId = null;
 	let listEditorSearchQuery = '';
 	let listEditorRenderFrame = 0;
-	let listEditorMeasureFrame = 0;
-	let listEditorRowResizeObserver = null;
-	const listEditorRowHeightCache = new Map();
+	const listEditorScrollPositions = new Map();
 	function blacklistKeysForWord(word, row = null) {
 		const canonical = resolveCanonicalWord(word);
 		const keys = new Set([String(word || '').trim(), canonical].filter(Boolean));
@@ -133,70 +129,24 @@ export function createListsUi(ctx) {
 	}
 
 
-	function getListEditorLayoutKey(body) {
-		const mobile = matchMedia(
-			'(max-width: 820px) and (orientation: portrait)'
-		).matches;
-		const widthBucket = Math.max(
-			1,
-			Math.round((body?.clientWidth || innerWidth || 1) / 20)
+
+	function listEditorScrollKey(
+		listId = listEditorSearchListId,
+		query = listEditorSearchQuery
+	) {
+		return `${listId || ''}\u0000${query || ''}`;
+	}
+
+
+	function getListEditorRowHeight(body) {
+		const cssValue = Number.parseFloat(
+			getComputedStyle(body).getPropertyValue(
+				'--word-editor-row-height'
+			)
 		);
-		return `${mobile ? 'mobile' : 'desktop'}:${widthBucket}`;
-	}
-
-
-	function getListEditorEstimatedRowHeight() {
-		return matchMedia(
-			'(max-width: 820px) and (orientation: portrait)'
-		).matches
-			? LIST_EDITOR_MOBILE_ESTIMATED_ROW_HEIGHT
-			: LIST_EDITOR_DESKTOP_ESTIMATED_ROW_HEIGHT;
-	}
-
-
-	function listEditorRowHeightKey(layoutKey, listId, record) {
-		return `${layoutKey}\u0000${listId}\u0000${record.sourceIndex}`;
-	}
-
-
-	function buildListEditorOffsets(records, layoutKey, listId, fallbackHeight) {
-		const offsets = new Array(records.length + 1);
-		offsets[0] = 0;
-		for (let index = 0; index < records.length; index += 1) {
-			const cached = listEditorRowHeightCache.get(
-				listEditorRowHeightKey(
-					layoutKey,
-					listId,
-					records[index]
-				)
-			);
-			offsets[index + 1] = offsets[index] + (
-				Number.isFinite(cached) && cached > 0
-					? cached
-					: fallbackHeight
-			);
-		}
-		return offsets;
-	}
-
-
-	function findListEditorRowAtOffset(offsets, position) {
-		const rowCount = Math.max(0, offsets.length - 1);
-		if (!rowCount) return 0;
-		const target = Math.max(0, position);
-		let low = 0;
-		let high = rowCount - 1;
-		while (low <= high) {
-			const middle = Math.floor((low + high) / 2);
-			if (offsets[middle + 1] <= target) {
-				low = middle + 1;
-			} else if (offsets[middle] > target) {
-				high = middle - 1;
-			} else {
-				return middle;
-			}
-		}
-		return Math.max(0, Math.min(rowCount - 1, low));
+		return Number.isFinite(cssValue) && cssValue > 0
+			? cssValue
+			: 54;
 	}
 
 
@@ -317,12 +267,6 @@ export function createListsUi(ctx) {
 			cancelAnimationFrame(listEditorRenderFrame);
 			listEditorRenderFrame = 0;
 		}
-		if (listEditorMeasureFrame) {
-			cancelAnimationFrame(listEditorMeasureFrame);
-			listEditorMeasureFrame = 0;
-		}
-		listEditorRowResizeObserver?.disconnect();
-		listEditorRowResizeObserver = null;
 		panel.oninput = null;
 		panel.onkeydown = null;
 		panel.onchange = null;
@@ -331,6 +275,12 @@ export function createListsUi(ctx) {
 		const previousBody = panel.querySelector('.word-editor-body');
 		const previousScrollTop = previousBody?.scrollTop || 0;
 		const previousScrollLeft = previousBody?.scrollLeft || 0;
+		if (previousBody && listEditorSearchListId) {
+			listEditorScrollPositions.set(
+				listEditorScrollKey(),
+				previousScrollTop
+			);
+		}
 
 		captureListEditorDrafts(panel);
 		syncSelectedListForEnabledLists();
@@ -408,115 +358,32 @@ export function createListsUi(ctx) {
 		const visibleRows = panel.querySelector('.word-editor-visible-rows');
 		const searchInput = panel.querySelector('[data-list-search]');
 		const searchCount = panel.querySelector('[data-list-search-count]');
-		const layoutKey = getListEditorLayoutKey(body);
-		const estimatedRowHeight = getListEditorEstimatedRowHeight();
-		let rowOffsets = buildListEditorOffsets(
-			filteredRecords,
-			layoutKey,
-			listId,
-			estimatedRowHeight
-		);
-		let rowOffsetsDirty = true;
+		const rowHeight = getListEditorRowHeight(body);
 		let renderedStart = -1;
 		let renderedEnd = -1;
 
-		function rebuildRowOffsets() {
-			rowOffsets = buildListEditorOffsets(
-				filteredRecords,
-				layoutKey,
-				listId,
-				estimatedRowHeight
-			);
-			if (spacer) {
-				spacer.style.height = `${Math.max(
-					estimatedRowHeight,
-					rowOffsets[rowOffsets.length - 1] || 0
-				)}px`;
-			}
-			rowOffsetsDirty = false;
-		}
-
-		function scheduleRenderedRowMeasurement() {
-			if (listEditorMeasureFrame) return;
-			listEditorMeasureFrame = requestAnimationFrame(() => {
-				listEditorMeasureFrame = 0;
-				if (!body || !visibleRows || renderedStart < 0) return;
-
-				const oldRenderedTop = rowOffsets[renderedStart] || 0;
-				let changed = false;
-				visibleRows
-					.querySelectorAll('[data-virtual-index]')
-					.forEach((node) => {
-						const index = Number(node.dataset.virtualIndex);
-						const record = filteredRecords[index];
-						const height = node.getBoundingClientRect().height;
-						if (
-							!record ||
-							!Number.isFinite(height) ||
-							height <= 0
-						) return;
-
-						const key = listEditorRowHeightKey(
-							layoutKey,
-							listId,
-							record
-						);
-						const previous = listEditorRowHeightCache.get(key);
-						if (!Number.isFinite(previous) || Math.abs(previous - height) > .5) {
-							listEditorRowHeightCache.set(key, height);
-							changed = true;
-						}
-					});
-
-				if (!changed) return;
-				rebuildRowOffsets();
-				const newRenderedTop = rowOffsets[renderedStart] || 0;
-				visibleRows.style.transform =
-					`translateY(${newRenderedTop}px)`;
-				body.scrollTop = Math.max(
-					0,
-					body.scrollTop + newRenderedTop - oldRenderedTop
-				);
-				scheduleVisibleRowsRender();
-			});
-		}
-
-		function observeRenderedRows() {
-			listEditorRowResizeObserver?.disconnect();
-			if (!visibleRows || typeof ResizeObserver === 'undefined') {
-				scheduleRenderedRowMeasurement();
-				return;
-			}
-			listEditorRowResizeObserver = new ResizeObserver(() => {
-				scheduleRenderedRowMeasurement();
-			});
-			visibleRows
-				.querySelectorAll('[data-virtual-index]')
-				.forEach((node) => listEditorRowResizeObserver.observe(node));
-			scheduleRenderedRowMeasurement();
+		function syncVirtualSpacerHeight() {
+			if (!spacer) return;
+			spacer.style.height = `${Math.max(
+				rowHeight,
+				filteredRecords.length * rowHeight
+			)}px`;
 		}
 
 		function renderVisibleRows(force = false) {
 			if (!body || !spacer || !visibleRows) return;
-			if (rowOffsetsDirty) rebuildRowOffsets();
+			syncVirtualSpacerHeight();
 			const viewportHeight = body.clientHeight || 470;
-			const start = filteredRecords.length
-				? findListEditorRowAtOffset(
-					rowOffsets,
-					body.scrollTop - LIST_EDITOR_OVERSCAN_PX
-				)
-				: 0;
-			const end = filteredRecords.length
-				? Math.min(
-					filteredRecords.length,
-					findListEditorRowAtOffset(
-						rowOffsets,
-						body.scrollTop +
-							viewportHeight +
-							LIST_EDITOR_OVERSCAN_PX
-					) + 1
-				)
-				: 0;
+			const firstVisible = Math.floor(body.scrollTop / rowHeight);
+			const start = Math.max(
+				0,
+				firstVisible - LIST_EDITOR_OVERSCAN_ROWS
+			);
+			const visibleCount = Math.ceil(viewportHeight / rowHeight);
+			const end = Math.min(
+				filteredRecords.length,
+				start + visibleCount + LIST_EDITOR_OVERSCAN_ROWS * 2
+			);
 
 			if (force || start !== renderedStart || end !== renderedEnd) {
 				captureListEditorDrafts(visibleRows);
@@ -524,7 +391,7 @@ export function createListsUi(ctx) {
 				renderedEnd = end;
 				visibleRows.dataset.start = String(start);
 				visibleRows.style.transform =
-					`translateY(${rowOffsets[start] || 0}px)`;
+					`translateY(${start * rowHeight}px)`;
 				visibleRows.innerHTML = filteredRecords.length
 					? filteredRecords
 						.slice(start, end)
@@ -537,7 +404,6 @@ export function createListsUi(ctx) {
 						)
 						.join('')
 					: '<p class="feedback word-editor-empty">No matching words.</p>';
-				observeRenderedRows();
 			}
 
 			if (searchCount) {
@@ -557,9 +423,13 @@ export function createListsUi(ctx) {
 			});
 		}
 
-		body?.addEventListener('scroll', scheduleVisibleRowsRender, {
-			passive: true
-		});
+		body?.addEventListener('scroll', () => {
+			listEditorScrollPositions.set(
+				listEditorScrollKey(listId, listEditorSearchQuery),
+				body.scrollTop
+			);
+			scheduleVisibleRowsRender();
+		}, { passive: true });
 
 		panel.oninput = (event) => {
 			const target = event.target;
@@ -571,9 +441,13 @@ export function createListsUi(ctx) {
 					searchRecords,
 					listEditorSearchQuery
 				);
-				rowOffsetsDirty = true;
 				renderedStart = -1;
 				renderedEnd = -1;
+				syncVirtualSpacerHeight();
+				listEditorScrollPositions.set(
+					listEditorScrollKey(listId, listEditorSearchQuery),
+					0
+				);
 				if (body) body.scrollTop = 0;
 				renderVisibleRows(true);
 				return;
@@ -663,12 +537,25 @@ export function createListsUi(ctx) {
 			refreshListEditorAfterAction(statusMessage);
 		};
 
+		syncVirtualSpacerHeight();
 		if (body) {
-			body.scrollTop =
-				scrollIntoView || listChanged ? 0 : previousScrollTop;
-			body.scrollLeft = previousScrollLeft;
+			const savedScrollTop = listEditorScrollPositions.get(
+				listEditorScrollKey(listId, listEditorSearchQuery)
+			);
+			const requestedScrollTop = scrollIntoView || listChanged
+				? 0
+				: savedScrollTop ?? previousScrollTop;
+			const maximumScrollTop = Math.max(
+				0,
+				filteredRecords.length * rowHeight - body.clientHeight
+			);
+			body.scrollTop = Math.min(
+				maximumScrollTop,
+				Math.max(0, requestedScrollTop)
+			);
 		}
 		renderVisibleRows(true);
+		if (body) body.scrollLeft = previousScrollLeft;
 
 		if (scrollIntoView) panel.scrollIntoView({ block: 'nearest' });
 		if (scrollIntoView) searchInput?.focus({ preventScroll: true });
@@ -726,12 +613,12 @@ export function createListsUi(ctx) {
 			<div class="word-editor-row status-${escapeHtml(status)}${studyable ? '' : ' not-studyable'}" role="row"${virtualIndexAttribute}>
 				<span class="word-cell">
 					<strong>${escapeHtml(displayWord)}</strong>
-					<small>
+					<small title="${escapeHtml(row.pinyin || row.numbered || '')}">
 						${escapeHtml(row.pinyin || row.numbered || '')}
 						${studyable ? '' : ' · missing Hanzi data'}
 					</small>
 				</span>
-				<span>
+				<span class="word-status-cell">
 					<select data-word-status data-word="${escapeHtml(word)}"${disabled}>
 						${statusOption('new', 'New', status)}
 						${statusOption('due', 'Due review', status)}
@@ -747,7 +634,7 @@ export function createListsUi(ctx) {
 					${nextReviewControls}
 				</span>
 				<span class="fsrs-debug-cell">${fsrsDebug}</span>
-				<span><small>${attempts} attempts · ${pct} success</small></span>
+				<span class="word-stats-cell"><small>${attempts} attempts · ${pct} success</small></span>
 				<span class="word-actions">
 					${wordActions}
 				</span>
