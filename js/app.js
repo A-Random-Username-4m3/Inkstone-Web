@@ -83,6 +83,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 
 	state = loadState();
 	let hanzi = {};
+	let hanziReady = false;
 	let lists = {};
 	let currentCard = null;
 	let stagedQueue = Array.isArray(state.session?.stageQueue)
@@ -204,7 +205,11 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		get state() { return state; },
 		set state(value) { state = value; },
 		get hanzi() { return hanzi; },
-		set hanzi(value) { hanzi = value; },
+		set hanzi(value) {
+			hanzi = value || {};
+			hanziReady = true;
+		},
+		get hanziReady() { return hanziReady; },
 		get lists() { return lists; },
 		set lists(value) { lists = value; },
 		get currentCard() { return currentCard; },
@@ -430,8 +435,10 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		initializeAudio();
 		bindUI();
 		registerServiceWorker();
-		await refreshReviewLogCount();
-		await loadStaticData();
+		await Promise.all([
+			refreshReviewLogCount(),
+			loadStaticData()
+		]);
 		applyDefaultListSelection();
 		syncVocabularyWithEnabledLists();
 		renderLists();
@@ -818,9 +825,10 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 	}
 
 
-	function renderProgress() {
-		const sets = getDueSets();
-		const left = getRemainder(sets);
+	function renderProgress(
+		sets = getDueSets(),
+		left = getRemainder(sets)
+	) {
 		const mastered = sets.active.filter((x) => isMasteredEntry(x)).length;
 		const stats = [
 			[sets.active.length, 'active words'],

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'inkstone-static-a0.2.13.1';
+const CACHE_NAME = 'inkstone-static-a0.2.13.2';
 const CORE_ASSETS = [
 	'./',
 	'./index.html',
@@ -99,28 +99,44 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function cacheFirst(request) {
-	const cached = await caches.match(request, {ignoreSearch: true});
-	const fetchAndCache = fetch(request).then(async (response) => {
+	const cached = await caches.match(
+		request,
+		{ ignoreSearch: true }
+	);
+
+	if (cached) return cached;
+
+	try {
+		const response = await fetch(request);
+
 		if (response && response.ok) {
 			try {
 				const cache = await caches.open(CACHE_NAME);
 				await cache.put(request, response.clone());
 			} catch (error) {
-				console.warn('Inkstone service worker cache update failed:', error);
+				console.warn(
+					'Inkstone service worker cache update failed:',
+					error
+				);
 			}
 		}
+
 		return response;
-	});
-	if (cached) {
-		fetchAndCache.catch(() => null);
-		return cached;
+	} catch (error) {
+		if (request.mode === 'navigate') {
+			return caches.match('./index.html');
+		}
+
+		return new Response(
+			'Offline and not cached.',
+			{
+				status: 503,
+				statusText: 'Offline',
+				headers: {
+					'Content-Type':
+						'text/plain; charset=utf-8'
+				}
+			}
+		);
 	}
-	return fetchAndCache.catch(async () => {
-		if (request.mode === 'navigate') return caches.match('./index.html');
-		return new Response('Offline and not cached.', {
-			status: 503,
-			statusText: 'Offline',
-			headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-		});
-	});
 }

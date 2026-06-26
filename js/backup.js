@@ -31,22 +31,60 @@ export function createBackupApi(ctx) {
 	const clearAllReviewLogs = (...args) => ctx.clearAllReviewLogs(...args);
 
 	async function loadStaticData() {
-		ctx.hanzi = await fetchJson('data/hanzi.json', SAMPLE_DATA);
-		const manifest = await fetchJson('data/lists.json', null);
-		const loadedLists = {};
-		if (manifest) {
-			for (const [id, meta] of Object.entries(manifest)) {
-				try {
-					const text = await fetchText(meta.path);
-					loadedLists[id] = { ...meta, rows: parseTsvRows(text) };
-				} catch (error) {
-					console.warn(`Could not load list ${id}:`, error);
-				}
-			}
-		}
+		const hanziPromise = fetchJson(
+			'data/hanzi.json',
+			SAMPLE_DATA
+		);
+
+		const builtInListsPromise = (async () => {
+			const manifest = await fetchJson(
+				'data/lists.json',
+				null
+			);
+
+			if (!manifest) return {};
+
+			const results = await Promise.all(
+				Object.entries(manifest).map(
+					async ([id, meta]) => {
+						try {
+							const text = await fetchText(meta.path);
+
+							return [
+								id,
+								{
+									...meta,
+									rows: parseTsvRows(text)
+								}
+							];
+						} catch (error) {
+							console.warn(
+								`Could not load list ${id}:`,
+								error
+							);
+
+							return null;
+						}
+					}
+				)
+			);
+
+			return Object.fromEntries(
+				results.filter(Boolean)
+			);
+		})();
+
+		const [loadedHanzi, loadedLists] =
+			await Promise.all([
+				hanziPromise,
+				builtInListsPromise
+			]);
+
+		ctx.hanzi = loadedHanzi;
 		ctx.lists = Object.keys(loadedLists).length
 			? loadedLists
 			: structuredClone(SAMPLE_LISTS);
+
 		for (const [id, custom] of Object.entries(state.customLists || {})) {
 			ctx.lists[id] = custom;
 		}

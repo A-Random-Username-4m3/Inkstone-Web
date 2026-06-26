@@ -15,7 +15,7 @@ export function createVocabulary(ctx) {
 
 
 	function isActiveStudyWord(word) {
-		const dataReady = Object.keys(hanzi || {}).length > 0;
+		const dataReady = ctx.hanziReady;
 		const row = getEntryRow(word);
 		const studyWord = rowScriptWord(row, state.settings) || word;
 		return (

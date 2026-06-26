@@ -171,7 +171,12 @@ export function createListsUi(ctx) {
 			});
 			container.appendChild(row);
 		}
-		renderListEditor(false);
+		const listsTabVisible =
+			$('#tab-lists')?.classList.contains('active');
+
+		if (listsTabVisible) {
+			renderListEditor(false);
+		}
 	}
 
 

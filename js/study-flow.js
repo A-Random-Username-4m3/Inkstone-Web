@@ -453,7 +453,7 @@ export function createStudyFlow(ctx) {
 		disposeTrainer();
 		setPracticeEmptyState(true);
 		ctx.trainer = new PracticeCanvas($('#practiceCanvas'), null, () => {});
-		renderProgress();
+		renderProgress(sets, left);
 	}
 
 
@@ -478,7 +478,6 @@ export function createStudyFlow(ctx) {
 			$('#addExtraCardsPanel').classList.add('hidden');
 		setStudyControlsEnabled(true);
 		setPracticeEmptyState(false);
-		renderCharProgress(0, 0);
 		disposeTrainer();
 		ctx.trainer = new PracticeCanvas(
 			$('#practiceCanvas'),
@@ -486,7 +485,7 @@ export function createStudyFlow(ctx) {
 			completeCurrentCard
 		);
 		saveState();
-		renderProgress();
+		renderProgress(sets, left);
 	}
 
 
