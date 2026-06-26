@@ -563,6 +563,19 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		bind('#settingRevealOrder', 'change', (e) =>
 			updateSetting('revealOrder', e.target.checked)
 		);
+		bind('#settingShowManualGrading', 'change', (e) => {
+			const showManualGrading = e.target.checked;
+
+			updateSetting(
+				'showManualGrading',
+				showManualGrading
+			);
+
+			$('#manualGradePanel')?.classList.toggle(
+				'hidden',
+				!showManualGrading
+			);
+		});
 		bind('#settingSnapStrokes', 'change', (e) =>
 			updateSetting('snapStrokes', e.target.checked)
 		);

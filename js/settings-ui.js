@@ -74,6 +74,13 @@ export function createSettingsUi(ctx) {
 	function renderSettings() {
 		if ($('#settingRevealOrder'))
 			$('#settingRevealOrder').checked = !!state.settings.revealOrder;
+		const showManualGrading = state.settings.showManualGrading !== false;
+		if ($('#settingShowManualGrading'))
+			$('#settingShowManualGrading').checked = showManualGrading;
+		$('#manualGradePanel')?.classList.toggle(
+			'hidden',
+			!showManualGrading
+		);
 		if ($('#settingSnapStrokes'))
 			$('#settingSnapStrokes').checked = !!state.settings.snapStrokes;
 		if ($('#settingStage2KeepUserStrokes'))
