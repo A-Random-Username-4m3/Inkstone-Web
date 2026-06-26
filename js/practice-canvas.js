@@ -107,6 +107,7 @@ export class PracticeCanvas {
 		this.animating = false;
 		this.mistakes = 0;
 		this.mistakePressure = 0;
+		this.guidedStrokeIndex = null;
 		this.characterStartPenalties = this.penalties;
 		this.matcher = this.character ? new Matcher(this.character) : null;
 		this.revealed = false;
@@ -264,12 +265,22 @@ export class PracticeCanvas {
 			this.strokeGuideUnlocked()
 		);
 	}
+	canShowNextStrokeGuide() {
+		return !!this.character && !!this.missing.length;
+	}
 	shouldShowNextStrokeGuide() {
+		const stageOneGuide =
+			this.stage === 1 && !!settings().revealOrder;
+
+		const requestedGuide =
+			this.guidedStrokeIndex === this.missing[0];
+
 		return (
-			this.canUseStrokeGuide() &&
+			this.canShowNextStrokeGuide() &&
 			!this.waitingForStart &&
 			!this.previewing &&
-			!this.waitingForContinue
+			!this.waitingForContinue &&
+			(stageOneGuide || requestedGuide)
 		);
 	}
 	keepUserStrokesForCompletedStage() {
@@ -280,13 +291,42 @@ export class PracticeCanvas {
 		);
 	}
 	flashNextMissingStroke(fill, duration) {
-		if (!this.canUseStrokeGuide()) return false;
+		if (!this.canShowNextStrokeGuide()) return false;
 		this.flashStroke(
 			this.character.strokes[this.missing[0]],
 			fill,
 			duration
 		);
 		return true;
+	}
+	showNextStrokeGuide(
+		fill = 'rgba(0, 160, 220, .40)',
+		duration = 900
+	) {
+		if (!this.canShowNextStrokeGuide()) return false;
+
+		this.guidedStrokeIndex = this.missing[0];
+		this.flashNextMissingStroke(fill, duration);
+		this.draw();
+
+		return true;
+	}
+	maybeShowMistakeHint() {
+		if (
+			this.stage === 1 ||
+			!settings().revealOrder ||
+			this.mistakePressure < 3 ||
+			this.guidedStrokeIndex === this.missing[0]
+		) {
+			return false;
+		}
+
+		this.penalties += 4;
+
+		return this.showNextStrokeGuide(
+			'rgba(0, 160, 220, .38)',
+			850
+		);
 	}
 	gradeStroke(stroke) {
 		const result = this.matcher.match(stroke, this.missing);
@@ -296,17 +336,14 @@ export class PracticeCanvas {
 			this.userStrokes.pop();
 			this.fadeStroke(stroke, 'rgba(80,0,0,.72)');
 			let message = 'Not recognized.';
-			if (this.mistakes >= 3) {
-				this.penalties += 4;
-				const hinted = this.flashNextMissingStroke(
-					'rgba(0, 160, 220, .38)',
-					850
-				);
+			if (this.mistakePressure >= 3) {
+				const hinted = this.maybeShowMistakeHint();
+
 				message = hinted
 					? 'Not recognized. Try the highlighted stroke.'
 					: settings().revealOrder
 						? 'Not recognized. Try again.'
-						: 'Not recognized. Next-stroke hints are disabled in Settings.';
+						: 'Not recognized. Automatic next-stroke hints are disabled in Settings.';
 			}
 			playSound('wrongStroke');
 			this.setFeedback(message, 'danger');
@@ -328,8 +365,13 @@ export class PracticeCanvas {
 			this.userStrokes.pop();
 			this.fadeStroke(stroke, 'rgba(80,0,0,.72)');
 			playSound('wrongStroke');
-			this.setFeedback('That stroke is already done.', 'warning');
-			this.flashNextMissingStroke('rgba(0, 160, 220, .38)', 850);
+			const hinted = this.maybeShowMistakeHint();
+			this.setFeedback(
+				hinted
+					? 'That stroke is already done. Try the highlighted stroke.'
+					: 'That stroke is already done.',
+				'warning'
+			);
 			return;
 		}
 
@@ -342,6 +384,7 @@ export class PracticeCanvas {
 			previousPenalties: this.penalties,
 			previousMistakes: this.mistakes,
 			previousMistakePressure: this.mistakePressure,
+			previousGuidedStrokeIndex: this.guidedStrokeIndex,
 			previousAcceptedResultsLength: this.acceptedResults.length,
 			previousRevealedChars: this.card?.revealedChars || 0,
 			previousWaitingForContinue: this.waitingForContinue
@@ -375,6 +418,12 @@ export class PracticeCanvas {
 				? 'wrongStroke'
 				: 'correctStroke';
 		playSound(acceptedStrokeSound);
+		if (!this.missing.includes(this.guidedStrokeIndex)) {
+			this.guidedStrokeIndex = null;
+		}
+
+		this.mistakes = 0;
+		this.mistakePressure = 0;
 		if (this.missing.length === 0) {
 			const charPenalties = Math.max(
 				0,
@@ -398,7 +447,6 @@ export class PracticeCanvas {
 			const orderPenalty = 2 * (firstMatchedIndex - this.missing[0]);
 			this.penalties += orderPenalty;
 			this.mistakePressure += Math.max(1, orderPenalty);
-			this.flashNextMissingStroke('rgba(255, 172, 0, .42)', 950);
 			this.setFeedback(
 				result.warning
 					? `${message} Stroke order warning.`
@@ -406,8 +454,6 @@ export class PracticeCanvas {
 				'warning'
 			);
 		} else {
-			this.mistakes = 0;
-			this.flashNextMissingStroke('rgba(0, 160, 220, .30)', 650);
 			this.setFeedback(message, kind);
 		}
 	}
@@ -437,20 +483,23 @@ export class PracticeCanvas {
 		}
 	}
 	hint() {
-		if (!this.character || !this.missing.length) return;
-		if (!this.canUseStrokeGuide()) {
-			this.setFeedback(
-				settings().revealOrder
-					? `Stage ${this.stage} hints unlock after enough mistakes.`
-					: 'Next-stroke hints are disabled in Settings.',
-				'info'
-			);
+		if (!this.character || !this.missing.length || this.waitingForContinue)
 			return;
+
+		if (this.waitingForStart) {
+			this.beginDrawing();
 		}
-		this.flashNextMissingStroke('rgba(0, 160, 220, .40)', 900);
-		this.penalties += 1;
-		this.setFeedback('Hint shown.', 'warning');
-		this.draw();
+
+		if (!this.showNextStrokeGuide()) return;
+
+		if (this.stage === 2 || this.stage === 3) {
+			this.penalties += 1;
+		}
+
+		this.setFeedback(
+			'Next-stroke hint shown. Use Hint again after completing it.',
+			'warning'
+		);
 	}
 	reveal() {
 		if (!this.character) return;
@@ -493,6 +542,7 @@ export class PracticeCanvas {
 		this.penalties = entry.previousPenalties;
 		this.mistakes = entry.previousMistakes;
 		this.mistakePressure = entry.previousMistakePressure;
+		this.guidedStrokeIndex = entry.previousGuidedStrokeIndex ?? null;
 		this.acceptedResults = this.acceptedResults.slice(
 			0,
 			entry.previousAcceptedResultsLength
