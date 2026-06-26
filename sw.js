@@ -1,4 +1,4 @@
-const CACHE_NAME = 'inkstone-static-a0.2.13.2';
+const CACHE_NAME = 'inkstone-static-a0.2.14.0';
 const CORE_ASSETS = [
 	'./',
 	'./index.html',

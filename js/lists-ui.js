@@ -38,6 +38,15 @@ export function createListsUi(ctx) {
 	const relearningStepInterval = (...args) => ctx.relearningStepInterval(...args);
 	const nextCard = (...args) => ctx.nextCard(...args);
 	const playSound = (...args) => ctx.playSound?.(...args);
+	const LIST_EDITOR_OVERSCAN_PX = 280;
+	const LIST_EDITOR_DESKTOP_ESTIMATED_ROW_HEIGHT = 54;
+	const LIST_EDITOR_MOBILE_ESTIMATED_ROW_HEIGHT = 190;
+	let listEditorSearchListId = null;
+	let listEditorSearchQuery = '';
+	let listEditorRenderFrame = 0;
+	let listEditorMeasureFrame = 0;
+	let listEditorRowResizeObserver = null;
+	const listEditorRowHeightCache = new Map();
 	function blacklistKeysForWord(word, row = null) {
 		const canonical = resolveCanonicalWord(word);
 		const keys = new Set([String(word || '').trim(), canonical].filter(Boolean));
@@ -78,6 +87,116 @@ export function createListsUi(ctx) {
 	function setText(selector, text) {
 		const node = $(selector);
 		if (node) node.textContent = text;
+	}
+
+
+	function normalizePinyinSearch(value) {
+		return String(value || '')
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.toLowerCase()
+			.replace(/v/g, 'u')
+			.replace(/[1-5]/g, '')
+			.replace(/[^a-z]/g, '');
+	}
+
+
+	function createListEditorSearchRecord(row, sourceIndex) {
+		return {
+			row,
+			sourceIndex,
+			words: rowWords(row).map((word) =>
+				String(word || '').toLowerCase()
+			),
+			pinyin: normalizePinyinSearch(
+				`${row.pinyin || ''} ${row.numbered || ''}`
+			)
+		};
+	}
+
+
+	function filterListEditorRecords(records, query) {
+		const rawQuery = String(query || '').trim();
+		if (!rawQuery) return records;
+
+		const wordQuery = rawQuery
+			.toLowerCase()
+			.replace(/\s+/g, '');
+		const pinyinQuery = normalizePinyinSearch(rawQuery);
+
+		return records.filter((record) =>
+			record.words.some((word) =>
+				word.replace(/\s+/g, '').includes(wordQuery)
+			) ||
+			(Boolean(pinyinQuery) && record.pinyin.includes(pinyinQuery))
+		);
+	}
+
+
+	function getListEditorLayoutKey(body) {
+		const mobile = matchMedia(
+			'(max-width: 820px) and (orientation: portrait)'
+		).matches;
+		const widthBucket = Math.max(
+			1,
+			Math.round((body?.clientWidth || innerWidth || 1) / 20)
+		);
+		return `${mobile ? 'mobile' : 'desktop'}:${widthBucket}`;
+	}
+
+
+	function getListEditorEstimatedRowHeight() {
+		return matchMedia(
+			'(max-width: 820px) and (orientation: portrait)'
+		).matches
+			? LIST_EDITOR_MOBILE_ESTIMATED_ROW_HEIGHT
+			: LIST_EDITOR_DESKTOP_ESTIMATED_ROW_HEIGHT;
+	}
+
+
+	function listEditorRowHeightKey(layoutKey, listId, record) {
+		return `${layoutKey}\u0000${listId}\u0000${record.sourceIndex}`;
+	}
+
+
+	function buildListEditorOffsets(records, layoutKey, listId, fallbackHeight) {
+		const offsets = new Array(records.length + 1);
+		offsets[0] = 0;
+		for (let index = 0; index < records.length; index += 1) {
+			const cached = listEditorRowHeightCache.get(
+				listEditorRowHeightKey(
+					layoutKey,
+					listId,
+					records[index]
+				)
+			);
+			offsets[index + 1] = offsets[index] + (
+				Number.isFinite(cached) && cached > 0
+					? cached
+					: fallbackHeight
+			);
+		}
+		return offsets;
+	}
+
+
+	function findListEditorRowAtOffset(offsets, position) {
+		const rowCount = Math.max(0, offsets.length - 1);
+		if (!rowCount) return 0;
+		const target = Math.max(0, position);
+		let low = 0;
+		let high = rowCount - 1;
+		while (low <= high) {
+			const middle = Math.floor((low + high) / 2);
+			if (offsets[middle + 1] <= target) {
+				low = middle + 1;
+			} else if (offsets[middle] > target) {
+				high = middle - 1;
+			} else {
+				return middle;
+			}
+		}
+		return Math.max(0, Math.min(rowCount - 1, low));
 	}
 
 
@@ -194,6 +313,21 @@ export function createListsUi(ctx) {
 		const panel = $('#listWordEditor');
 		if (!panel) return;
 
+		if (listEditorRenderFrame) {
+			cancelAnimationFrame(listEditorRenderFrame);
+			listEditorRenderFrame = 0;
+		}
+		if (listEditorMeasureFrame) {
+			cancelAnimationFrame(listEditorMeasureFrame);
+			listEditorMeasureFrame = 0;
+		}
+		listEditorRowResizeObserver?.disconnect();
+		listEditorRowResizeObserver = null;
+		panel.oninput = null;
+		panel.onkeydown = null;
+		panel.onchange = null;
+		panel.onclick = null;
+
 		const previousBody = panel.querySelector('.word-editor-body');
 		const previousScrollTop = previousBody?.scrollTop || 0;
 		const previousScrollLeft = previousBody?.scrollLeft || 0;
@@ -209,16 +343,25 @@ export function createListsUi(ctx) {
 		}
 		if (card) card.classList.remove('hidden');
 
-		const list = lists[ctx.selectedListId];
+		const listId = ctx.selectedListId;
+		const listChanged = listEditorSearchListId !== listId;
+		if (listChanged) {
+			listEditorSearchListId = listId;
+			listEditorSearchQuery = '';
+		}
+
+		const list = lists[listId];
 		const rows = list.rows || [];
+		const searchRecords = rows.map(createListEditorSearchRecord);
+		let filteredRecords = filterListEditorRecords(
+			searchRecords,
+			listEditorSearchQuery
+		);
 		const studyableCount = rows.filter((row) =>
 			canStudyWord(rowScriptWord(row, state.settings))
 		).length;
-		const enabled = !!state.enabledLists[ctx.selectedListId];
+		const enabled = !!state.enabledLists[listId];
 
-		const editorRows = rows
-			.map((row) => renderWordEditorRow(row, ctx.selectedListId))
-			.join('');
 		panel.innerHTML = `
 			<div class="list-editor-header">
 				<div>
@@ -234,6 +377,17 @@ export function createListsUi(ctx) {
 					<button type="button" data-list-action="reset-list">Reset list progress</button>
 				</div>
 			</div>
+			<label class="list-editor-search">
+				<span>Search words</span>
+				<input
+					type="search"
+					data-list-search
+					value="${escapeHtml(listEditorSearchQuery)}"
+					placeholder="Hanzi or pinyin; tones and spaces optional"
+					autocomplete="off"
+					spellcheck="false">
+				<small data-list-search-count aria-live="polite"></small>
+			</label>
 			<p id="listEditorStatus" class="feedback list-editor-status">
 				Use this developer view to inspect FSRS state, due times, and per-word progress.
 			</p>
@@ -241,94 +395,287 @@ export function createListsUi(ctx) {
 				<div class="word-editor-row word-editor-head" role="row">
 					<span>Word</span><span>Status</span><span>Next review</span><span>FSRS</span><span>Stats</span><span>Actions</span>
 				</div>
-				<div class="word-editor-body">
-					${editorRows || '<p class="feedback">This list has no rows.</p>'}
+				<div class="word-editor-body" tabindex="0">
+					<div class="word-editor-virtual-spacer">
+						<div class="word-editor-visible-rows"></div>
+					</div>
 				</div>
 			</div>
 		`;
 
-		panel.querySelectorAll('[data-word-status]').forEach((select) => {
-			select.addEventListener('change', async () => {
-				const word = select.dataset.word;
-				const wasBlacklisted = !!state.blacklist[word];
-				const nextStatus = select.value;
-				const statusMessage = await updateWordLearningStatus(
-					word,
-					ctx.selectedListId,
-					nextStatus
+		const body = panel.querySelector('.word-editor-body');
+		const spacer = panel.querySelector('.word-editor-virtual-spacer');
+		const visibleRows = panel.querySelector('.word-editor-visible-rows');
+		const searchInput = panel.querySelector('[data-list-search]');
+		const searchCount = panel.querySelector('[data-list-search-count]');
+		const layoutKey = getListEditorLayoutKey(body);
+		const estimatedRowHeight = getListEditorEstimatedRowHeight();
+		let rowOffsets = buildListEditorOffsets(
+			filteredRecords,
+			layoutKey,
+			listId,
+			estimatedRowHeight
+		);
+		let rowOffsetsDirty = true;
+		let renderedStart = -1;
+		let renderedEnd = -1;
+
+		function rebuildRowOffsets() {
+			rowOffsets = buildListEditorOffsets(
+				filteredRecords,
+				layoutKey,
+				listId,
+				estimatedRowHeight
+			);
+			if (spacer) {
+				spacer.style.height = `${Math.max(
+					estimatedRowHeight,
+					rowOffsets[rowOffsets.length - 1] || 0
+				)}px`;
+			}
+			rowOffsetsDirty = false;
+		}
+
+		function scheduleRenderedRowMeasurement() {
+			if (listEditorMeasureFrame) return;
+			listEditorMeasureFrame = requestAnimationFrame(() => {
+				listEditorMeasureFrame = 0;
+				if (!body || !visibleRows || renderedStart < 0) return;
+
+				const oldRenderedTop = rowOffsets[renderedStart] || 0;
+				let changed = false;
+				visibleRows
+					.querySelectorAll('[data-virtual-index]')
+					.forEach((node) => {
+						const index = Number(node.dataset.virtualIndex);
+						const record = filteredRecords[index];
+						const height = node.getBoundingClientRect().height;
+						if (
+							!record ||
+							!Number.isFinite(height) ||
+							height <= 0
+						) return;
+
+						const key = listEditorRowHeightKey(
+							layoutKey,
+							listId,
+							record
+						);
+						const previous = listEditorRowHeightCache.get(key);
+						if (!Number.isFinite(previous) || Math.abs(previous - height) > .5) {
+							listEditorRowHeightCache.set(key, height);
+							changed = true;
+						}
+					});
+
+				if (!changed) return;
+				rebuildRowOffsets();
+				const newRenderedTop = rowOffsets[renderedStart] || 0;
+				visibleRows.style.transform =
+					`translateY(${newRenderedTop}px)`;
+				body.scrollTop = Math.max(
+					0,
+					body.scrollTop + newRenderedTop - oldRenderedTop
 				);
-				if (!statusMessage) {
-					if (nextStatus === 'blacklisted' && !wasBlacklisted)
-						playSound('addBlacklist');
-					if (nextStatus !== 'blacklisted' && wasBlacklisted)
-						playSound('restoreBlacklist');
-				}
-				refreshListEditorAfterAction(statusMessage);
+				scheduleVisibleRowsRender();
 			});
-		});
-		panel.querySelectorAll('[data-next-value]').forEach((input) => {
-			input.addEventListener('input', () =>
-				saveListEditorDraft(input.dataset.word, ctx.selectedListId)
-			);
-			input.addEventListener('keydown', (event) => {
-				if (event.key === 'Enter')
-					setNextReviewFromControls(
-						input.dataset.word,
-						ctx.selectedListId
-					);
+		}
+
+		function observeRenderedRows() {
+			listEditorRowResizeObserver?.disconnect();
+			if (!visibleRows || typeof ResizeObserver === 'undefined') {
+				scheduleRenderedRowMeasurement();
+				return;
+			}
+			listEditorRowResizeObserver = new ResizeObserver(() => {
+				scheduleRenderedRowMeasurement();
 			});
+			visibleRows
+				.querySelectorAll('[data-virtual-index]')
+				.forEach((node) => listEditorRowResizeObserver.observe(node));
+			scheduleRenderedRowMeasurement();
+		}
+
+		function renderVisibleRows(force = false) {
+			if (!body || !spacer || !visibleRows) return;
+			if (rowOffsetsDirty) rebuildRowOffsets();
+			const viewportHeight = body.clientHeight || 470;
+			const start = filteredRecords.length
+				? findListEditorRowAtOffset(
+					rowOffsets,
+					body.scrollTop - LIST_EDITOR_OVERSCAN_PX
+				)
+				: 0;
+			const end = filteredRecords.length
+				? Math.min(
+					filteredRecords.length,
+					findListEditorRowAtOffset(
+						rowOffsets,
+						body.scrollTop +
+							viewportHeight +
+							LIST_EDITOR_OVERSCAN_PX
+					) + 1
+				)
+				: 0;
+
+			if (force || start !== renderedStart || end !== renderedEnd) {
+				captureListEditorDrafts(visibleRows);
+				renderedStart = start;
+				renderedEnd = end;
+				visibleRows.dataset.start = String(start);
+				visibleRows.style.transform =
+					`translateY(${rowOffsets[start] || 0}px)`;
+				visibleRows.innerHTML = filteredRecords.length
+					? filteredRecords
+						.slice(start, end)
+						.map(({ row }, visibleIndex) =>
+							renderWordEditorRow(
+								row,
+								listId,
+								start + visibleIndex
+							)
+						)
+						.join('')
+					: '<p class="feedback word-editor-empty">No matching words.</p>';
+				observeRenderedRows();
+			}
+
+			if (searchCount) {
+				const first = filteredRecords.length ? start + 1 : 0;
+				const last = filteredRecords.length ? end : 0;
+				searchCount.textContent = listEditorSearchQuery.trim()
+					? `Showing ${first}–${last} of ${filteredRecords.length} matches · ${rows.length} total`
+					: `Showing ${first}–${last} of ${rows.length} words`;
+			}
+		}
+
+		function scheduleVisibleRowsRender() {
+			if (listEditorRenderFrame) return;
+			listEditorRenderFrame = requestAnimationFrame(() => {
+				listEditorRenderFrame = 0;
+				renderVisibleRows();
+			});
+		}
+
+		body?.addEventListener('scroll', scheduleVisibleRowsRender, {
+			passive: true
 		});
-		panel.querySelectorAll('[data-next-unit]').forEach((select) => {
-			select.addEventListener('change', () =>
-				saveListEditorDraft(select.dataset.word, ctx.selectedListId)
+
+		panel.oninput = (event) => {
+			const target = event.target;
+			if (!(target instanceof HTMLInputElement)) return;
+
+			if (target.matches('[data-list-search]')) {
+				listEditorSearchQuery = target.value;
+				filteredRecords = filterListEditorRecords(
+					searchRecords,
+					listEditorSearchQuery
+				);
+				rowOffsetsDirty = true;
+				renderedStart = -1;
+				renderedEnd = -1;
+				if (body) body.scrollTop = 0;
+				renderVisibleRows(true);
+				return;
+			}
+
+			if (target.matches('[data-next-value]')) {
+				saveListEditorDraft(target.dataset.word, listId);
+			}
+		};
+
+		panel.onkeydown = (event) => {
+			const target = event.target;
+			if (
+				event.key === 'Enter' &&
+				target instanceof HTMLInputElement &&
+				target.matches('[data-next-value]')
+			) {
+				setNextReviewFromControls(target.dataset.word, listId);
+			}
+		};
+
+		panel.onchange = async (event) => {
+			const target = event.target;
+			if (!(target instanceof HTMLSelectElement)) return;
+
+			if (target.matches('[data-next-unit]')) {
+				saveListEditorDraft(target.dataset.word, listId);
+				return;
+			}
+
+			if (!target.matches('[data-word-status]')) return;
+			const word = target.dataset.word;
+			const wasBlacklisted = !!state.blacklist[word];
+			const nextStatus = target.value;
+			const statusMessage = await updateWordLearningStatus(
+				word,
+				listId,
+				nextStatus
 			);
-		});
-		panel.querySelectorAll('[data-word-action]').forEach((button) => {
-			button.addEventListener('click', async () => {
+			if (!statusMessage) {
+				if (nextStatus === 'blacklisted' && !wasBlacklisted)
+					playSound('addBlacklist');
+				if (nextStatus !== 'blacklisted' && wasBlacklisted)
+					playSound('restoreBlacklist');
+			}
+			refreshListEditorAfterAction(statusMessage);
+		};
+
+		panel.onclick = async (event) => {
+			const target = event.target;
+			if (!(target instanceof Element)) return;
+			const button = target.closest('button');
+			if (!button || !panel.contains(button)) return;
+
+			if (button.matches('[data-word-action]')) {
 				const word = button.dataset.word;
 				const action = button.dataset.wordAction;
 				if (action === 'set-next')
-					setNextReviewFromControls(word, ctx.selectedListId);
-				if (action === 'due-now') setWordDueNow(word, ctx.selectedListId);
+					setNextReviewFromControls(word, listId);
+				if (action === 'due-now') setWordDueNow(word, listId);
 				if (action === 'tomorrow')
-					setWordNext(word, ctx.selectedListId, ONE_DAY);
+					setWordNext(word, listId, ONE_DAY);
 				if (action === 'reset')
 					await resetWordProgress(word);
 				if (action === 'blacklist') {
 					const shouldBlacklist = !state.blacklist[word];
 					setBlacklistedWord(word, shouldBlacklist, getEntryRow(word));
-					playSound(shouldBlacklist ? 'addBlacklist' : 'restoreBlacklist');
+					playSound(
+						shouldBlacklist ? 'addBlacklist' : 'restoreBlacklist'
+					);
 				}
 				refreshListEditorAfterAction();
-			});
-		});
-		panel.querySelectorAll('[data-list-action]').forEach((button) => {
-			button.addEventListener('click', async () => {
-				const action = button.dataset.listAction;
-				let statusMessage = '';
-				if (action === 'due-all') {
-					const changed = makeListDueNow(ctx.selectedListId);
-					statusMessage = changed
-						? `${changed} scheduled/step word${changed === 1 ? '' : 's'} made due now.`
-						: 'No scheduled review or step words in this list.';
-				}
-				if (action === 'reset-list')
-					statusMessage = await resetListProgress(ctx.selectedListId);
-				refreshListEditorAfterAction(statusMessage);
-			});
-		});
+				return;
+			}
 
-		const nextBody = panel.querySelector('.word-editor-body');
-		if (nextBody && !scrollIntoView) {
-			nextBody.scrollTop = previousScrollTop;
-			nextBody.scrollLeft = previousScrollLeft;
+			if (!button.matches('[data-list-action]')) return;
+			const action = button.dataset.listAction;
+			let statusMessage = '';
+			if (action === 'due-all') {
+				const changed = makeListDueNow(listId);
+				statusMessage = changed
+					? `${changed} scheduled/step word${changed === 1 ? '' : 's'} made due now.`
+					: 'No scheduled review or step words in this list.';
+			}
+			if (action === 'reset-list')
+				statusMessage = await resetListProgress(listId);
+			refreshListEditorAfterAction(statusMessage);
+		};
+
+		if (body) {
+			body.scrollTop =
+				scrollIntoView || listChanged ? 0 : previousScrollTop;
+			body.scrollLeft = previousScrollLeft;
 		}
+		renderVisibleRows(true);
 
 		if (scrollIntoView) panel.scrollIntoView({ block: 'nearest' });
+		if (scrollIntoView) searchInput?.focus({ preventScroll: true });
 	}
 
 
-	function renderWordEditorRow(row, listId) {
+	function renderWordEditorRow(row, listId, virtualIndex = null) {
 		const word = rowCanonicalWord(row);
 		const displayWord = rowScriptWord(row, state.settings) || word;
 		const studyable = canStudyWord(displayWord);
@@ -372,8 +719,11 @@ export function createListsUi(ctx) {
 					${scheduleActions}
 					<button type="button" data-word-action="reset" data-word="${escapeHtml(word)}"${disabled}>Reset</button>
 					<button type="button" data-word-action="blacklist" data-word="${escapeHtml(word)}"${disabled}>Blacklist</button>`;
+		const virtualIndexAttribute = Number.isInteger(virtualIndex)
+			? ` data-virtual-index="${virtualIndex}"`
+			: '';
 		return `
-			<div class="word-editor-row status-${escapeHtml(status)}${studyable ? '' : ' not-studyable'}" role="row">
+			<div class="word-editor-row status-${escapeHtml(status)}${studyable ? '' : ' not-studyable'}" role="row"${virtualIndexAttribute}>
 				<span class="word-cell">
 					<strong>${escapeHtml(displayWord)}</strong>
 					<small>
@@ -863,7 +1213,8 @@ export function createListsUi(ctx) {
 		const panel = $('#listWordEditor');
 		if (!panel) return;
 		panel.querySelectorAll('[data-due-label]').forEach((node) => {
-			node.textContent = getWordDueText(node.dataset.word);
+			const nextText = getWordDueText(node.dataset.word);
+			if (node.textContent !== nextText) node.textContent = nextText;
 		});
 	}
 
