@@ -7,7 +7,8 @@ let environment = {
 	getSettings: () => ({}),
 	renderCharProgress: () => {},
 	setFeedbackMessage: () => {},
-	playSound: () => {}
+	playSound: () => {},
+	renderPenaltyStatus: () => {}
 };
 
 export function configurePracticeCanvas(options = {}) {
@@ -26,6 +27,10 @@ function setFeedbackMessage(...args) {
 
 function playSound(...args) {
 	environment.playSound?.(...args);
+}
+
+function renderPenaltyStatus(...args) {
+	environment.renderPenaltyStatus?.(...args);
 }
 
 function gradeFromPenaltyCount(penalties) {
@@ -83,10 +88,18 @@ export class PracticeCanvas {
 	get character() {
 		return this.card?.characters?.[this.charIndex];
 	}
+	get penalties() {
+		return this._penalties || 0;
+	}
+	set penalties(value) {
+		this._penalties = Math.max(0, Number(value) || 0);
+		renderPenaltyStatus(this._penalties);
+	}
 	resetCardState() {
 		this.charIndex = 0;
 		this.penalties = 0;
 		this.acceptedResults = [];
+		this.undoSequence = 0;
 		this.resetCharacterState();
 	}
 	clearPreviewTimer() {
@@ -102,6 +115,7 @@ export class PracticeCanvas {
 		this.userStrokes = [];
 		this.acceptedUserStrokes = 0;
 		this.acceptedHistory = [];
+		this.penaltyHistory = [];
 		this.currentStroke = [];
 		this.effects = [];
 		this.animating = false;
@@ -311,6 +325,44 @@ export class PracticeCanvas {
 
 		return true;
 	}
+	pushPenaltyUndo(label = 'penalty') {
+		this.penaltyHistory.push({
+			undoSequence: ++this.undoSequence,
+			label,
+			previousPenalties: this.penalties,
+			previousMistakes: this.mistakes,
+			previousMistakePressure: this.mistakePressure,
+			previousGuidedStrokeIndex: this.guidedStrokeIndex,
+			previousRevealed: this.revealed,
+			previousTargetHidden:
+				document.querySelector('#targetWord')?.classList.contains('hidden') ?? true,
+			previousEffects: this.effects.slice()
+		});
+	}
+	restorePenaltyUndo(entry) {
+		this.penalties = entry.previousPenalties;
+		this.mistakes = entry.previousMistakes;
+		this.mistakePressure = entry.previousMistakePressure;
+		this.guidedStrokeIndex = entry.previousGuidedStrokeIndex ?? null;
+		this.revealed = !!entry.previousRevealed;
+		this.effects = entry.previousEffects?.slice() || [];
+
+		const targetWord = document.querySelector('#targetWord');
+		if (targetWord) {
+			targetWord.classList.toggle('hidden', !!entry.previousTargetHidden);
+		}
+
+		this.setFeedback(`Undid ${entry.label}.`, 'warning');
+		this.draw();
+	}
+	willShowAutomaticMistakeHint(nextPressure) {
+		return (
+			this.stage !== 1 &&
+			!!settings().revealOrder &&
+			nextPressure >= 3 &&
+			this.guidedStrokeIndex !== this.missing[0]
+		);
+	}
 	maybeShowMistakeHint() {
 		if (
 			this.stage === 1 ||
@@ -331,6 +383,9 @@ export class PracticeCanvas {
 	gradeStroke(stroke) {
 		const result = this.matcher.match(stroke, this.missing);
 		if (!result.indices.length || result.score === -Infinity) {
+			if (this.willShowAutomaticMistakeHint(this.mistakePressure + 1)) {
+				this.pushPenaltyUndo('automatic hint penalty');
+			}
 			this.mistakes += 1;
 			this.mistakePressure += 1;
 			this.userStrokes.pop();
@@ -360,6 +415,7 @@ export class PracticeCanvas {
 
 		// The user's input matches strokes that were already drawn.
 		if (newMissing.length === previousMissing.length) {
+			this.pushPenaltyUndo('repeated-stroke penalty');
 			this.penalties += 1;
 			this.mistakePressure += 1;
 			this.userStrokes.pop();
@@ -376,6 +432,7 @@ export class PracticeCanvas {
 		}
 
 		const acceptedHistoryEntry = {
+			undoSequence: ++this.undoSequence,
 			stroke: stroke.slice(),
 			userStrokeIndex: Math.max(0, this.userStrokes.length - 1),
 			previousMissing,
@@ -498,13 +555,19 @@ export class PracticeCanvas {
 		const nextStrokeIndex = this.missing[0];
 		const isNewHint =
 			this.guidedStrokeIndex !== nextStrokeIndex;
+		const appliesPenalty =
+			isNewHint && (this.stage === 2 || this.stage === 3);
 
-		if (!this.showNextStrokeGuide()) return;
+		if (appliesPenalty) {
+			this.pushPenaltyUndo('hint penalty');
+		}
 
-		if (
-			isNewHint &&
-			(this.stage === 2 || this.stage === 3)
-		) {
+		if (!this.showNextStrokeGuide()) {
+			if (appliesPenalty) this.penaltyHistory.pop();
+			return;
+		}
+
+		if (appliesPenalty) {
 			this.penalties += 1;
 		}
 
@@ -517,6 +580,7 @@ export class PracticeCanvas {
 	}
 	reveal() {
 		if (!this.character) return;
+		this.pushPenaltyUndo('reveal penalty');
 		this.revealed = true;
 		this.penalties += 4;
 		this.mistakePressure += 4;
@@ -534,13 +598,27 @@ export class PracticeCanvas {
 		this.draw();
 	}
 	undo() {
-		if (this.waitingForStart || !this.userStrokes.length) return;
+		const acceptedEntry = this.acceptedHistory.at(-1);
+		const penaltyEntry = this.penaltyHistory.at(-1);
+
+		if (this.waitingForStart && !penaltyEntry) return;
+
 		const acceptedCount = Math.max(0, this.acceptedUserStrokes || 0);
 		if (!this.waitingForContinue && this.userStrokes.length > acceptedCount) {
 			const stroke = this.userStrokes.pop();
 			this.fadeStroke(stroke, 'rgba(80,0,0,.55)', 240);
 			this.setFeedback('Removed last drawn stroke.', 'danger');
 			this.draw();
+			return;
+		}
+
+		if (
+			penaltyEntry &&
+			(!acceptedEntry ||
+				penaltyEntry.undoSequence > acceptedEntry.undoSequence)
+		) {
+			this.penaltyHistory.pop();
+			this.restorePenaltyUndo(penaltyEntry);
 			return;
 		}
 
@@ -571,6 +649,7 @@ export class PracticeCanvas {
 		this.setFeedback('Undid accepted stroke.', 'warning');
 		this.draw();
 	}
+
 	setFeedback(message, kind = 'info') {
 		setFeedbackMessage(message, kind);
 		this.effects = this.effects.filter(

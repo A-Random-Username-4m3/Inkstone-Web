@@ -419,11 +419,23 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		installApp
 	} = backupApi;
 
+
+	function renderPenaltyStatus(penalties = 0) {
+		const node = $('#penaltyStatus');
+		if (!node) return;
+
+		const count = Math.max(0, Number(penalties) || 0);
+		node.textContent = `Penalty points: ${count}`;
+		node.classList.toggle('has-penalty', count > 0);
+		node.classList.toggle('high-penalty', count >= 5);
+	}
+
 	configurePracticeCanvas({
 		getSettings: () => state?.settings,
 		renderCharProgress,
 		setFeedbackMessage,
-		playSound
+		playSound,
+		renderPenaltyStatus
 	});
 
 

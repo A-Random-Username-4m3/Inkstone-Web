@@ -761,6 +761,23 @@ input[type="checkbox"] {
 		rgba(32, 96, 154, .52);
 	text-shadow: 0 -1px 0 rgba(0,0,0,.56);
 }
+.penalty-status {
+	padding: 1px 6px 2px;
+	border: 1px solid rgba(255,255,255,.28);
+	border-radius: 999px;
+	background: rgba(4, 48, 88, .24);
+	white-space: nowrap;
+}
+.penalty-status.has-penalty {
+	color: #fff3c4;
+	border-color: rgba(255, 226, 126, .48);
+	background: rgba(126, 78, 0, .34);
+}
+.penalty-status.high-penalty {
+	color: #ffe0dc;
+	border-color: rgba(255, 158, 145, .54);
+	background: rgba(132, 29, 21, .42);
+}
 
 
 .top-actions {
