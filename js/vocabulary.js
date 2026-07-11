@@ -96,7 +96,22 @@ export function createVocabulary(ctx) {
 	}
 
 
-	function syncVocabularyWithEnabledLists() {
+	function syncVocabularyWithEnabledLists({ save = true } = {}) {
+		state.vocabulary =
+			state.vocabulary && typeof state.vocabulary === 'object'
+				? state.vocabulary
+				: {};
+
+		const memberships = new Map();
+		for (const [id, list] of Object.entries(lists || {})) {
+			for (const row of list.rows || []) {
+				const word = rowCanonicalWord(row);
+				if (!word) continue;
+				if (!memberships.has(word)) memberships.set(word, new Set());
+				memberships.get(word).add(id);
+			}
+		}
+
 		const activeIds = Object.keys(state.enabledLists || {}).filter(
 			(id) => state.enabledLists[id] && lists[id]
 		);
@@ -105,10 +120,16 @@ export function createVocabulary(ctx) {
 				const word = rowCanonicalWord(row);
 				const studyWord = rowScriptWord(row, state.settings);
 				if (!word || !canStudyWord(studyWord)) continue;
-				ensureVocabularyEntry(word, id);
+				ensureVocabularyEntry(word);
 			}
 		}
-		saveState();
+
+		for (const [word, entry] of Object.entries(state.vocabulary)) {
+			if (!entry || typeof entry !== 'object') continue;
+			entry.lists = [...(memberships.get(word) || [])];
+		}
+
+		if (save) saveState();
 	}
 
 

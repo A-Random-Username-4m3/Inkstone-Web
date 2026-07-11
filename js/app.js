@@ -440,7 +440,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 
 
 	function saveState() {
-		persistState(state);
+		return persistState(state);
 	}
 
 	async function init() {

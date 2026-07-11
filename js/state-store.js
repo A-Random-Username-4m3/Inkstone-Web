@@ -1,5 +1,17 @@
 import { DEFAULT_STUDY_EXAMPLE_LIMIT } from './constants.js';
 import { normalizeScriptMode } from './script-mode.js';
+
+function isPlainObject(value) {
+	return (
+		value !== null &&
+		typeof value === 'object' &&
+		!Array.isArray(value)
+	);
+}
+
+function normalizeObject(value) {
+	return isPlainObject(value) ? value : {};
+}
 export function normalizeBlacklist(blacklist) {
 	if (Array.isArray(blacklist)) {
 		return Object.fromEntries(
@@ -111,7 +123,7 @@ export function createStateStore({
 	});
 
 	function mergeState(base, saved, root = true) {
-		for (const [key, value] of Object.entries(saved || {})) {
+		for (const [key, value] of Object.entries(normalizeObject(saved))) {
 			if (
 				value &&
 				typeof value === 'object' &&
@@ -126,6 +138,31 @@ export function createStateStore({
 			}
 		}
 		if (!root) return base;
+
+		const defaults = defaultState();
+		base.settings = isPlainObject(base.settings)
+			? base.settings
+			: { ...defaults.settings };
+		base.enabledLists = normalizeObject(base.enabledLists);
+		base.customLists = normalizeObject(base.customLists);
+		base.vocabulary = normalizeObject(base.vocabulary);
+		base.blacklist =
+			Array.isArray(base.blacklist) || isPlainObject(base.blacklist)
+				? base.blacklist
+				: {};
+		base.session = isPlainObject(base.session) ? base.session : {};
+
+		for (const [word, entry] of Object.entries(base.vocabulary)) {
+			if (!isPlainObject(entry)) {
+				delete base.vocabulary[word];
+				continue;
+			}
+			entry.word = String(entry.word || word).trim() || word;
+			entry.lists = Array.isArray(entry.lists)
+				? [...new Set(entry.lists.filter((id) => typeof id === 'string'))]
+				: [];
+		}
+
 		if (base.settings) {
 			for (const [key, value] of Object.entries(defaultScheduling)) {
 				if (base.settings[key] === undefined) base.settings[key] = value;
@@ -196,11 +233,13 @@ export function createStateStore({
 			const persisted = { ...state };
 			delete persisted.reviewLogs;
 			localStorage.setItem(storageKey, JSON.stringify(persisted));
+			return true;
 		} catch (error) {
 			console.error('Could not save Inkstone state:', error);
 			setBackupStatus?.(
 				'Save failed. Storage may be full or unavailable; export a backup before closing.'
 			);
+			return false;
 		}
 	}
 

@@ -1,4 +1,5 @@
 import { SAMPLE_DATA, SAMPLE_LISTS } from './sample-data.js';
+import { validateBackupPayload } from './backup-validation.js';
 
 const FIRST_FSRS_OPTIMIZATION_LOGS = 400;
 const FSRS_OPTIMIZATION_SNOOZE_DAYS = 30;
@@ -30,7 +31,7 @@ export function createBackupApi(ctx) {
 	const replaceReviewLogs = (...args) => ctx.replaceReviewLogs(...args);
 	const clearAllReviewLogs = (...args) => ctx.clearAllReviewLogs(...args);
 
-	async function loadStaticData() {
+	async function buildStaticData(sourceState = state) {
 		const hanziPromise = fetchJson(
 			'data/hanzi.json',
 			SAMPLE_DATA
@@ -74,20 +75,33 @@ export function createBackupApi(ctx) {
 			);
 		})();
 
-		const [loadedHanzi, loadedLists] =
+		const [loadedHanzi, loadedBuiltInLists] =
 			await Promise.all([
 				hanziPromise,
 				builtInListsPromise
 			]);
 
-		ctx.hanzi = loadedHanzi;
-		ctx.lists = Object.keys(loadedLists).length
-			? loadedLists
+		const loadedLists = Object.keys(loadedBuiltInLists).length
+			? loadedBuiltInLists
 			: structuredClone(SAMPLE_LISTS);
 
-		for (const [id, custom] of Object.entries(state.customLists || {})) {
-			ctx.lists[id] = custom;
+		for (const [id, custom] of Object.entries(
+			sourceState.customLists || {}
+		)) {
+			loadedLists[id] = structuredClone(custom);
 		}
+
+		return {
+			hanzi: loadedHanzi,
+			lists: loadedLists
+		};
+	}
+
+	async function loadStaticData() {
+		const loaded = await buildStaticData(state);
+		ctx.hanzi = loaded.hanzi;
+		ctx.lists = loaded.lists;
+		return loaded;
 	}
 
 	async function fetchJson(url, fallback) {
@@ -374,48 +388,103 @@ export function createBackupApi(ctx) {
 		cancelScheduledNextCard();
 		const reader = new FileReader();
 		reader.onload = async () => {
+			let previousReviewLogs = null;
+			let reviewLogsWereReplaced = false;
+			const previous = {
+				state: ctx.state,
+				hanzi: ctx.hanzi,
+				lists: ctx.lists,
+				currentCard: ctx.currentCard,
+				selectedListId: ctx.selectedListId,
+				listEditorDrafts: ctx.listEditorDrafts,
+				stagedQueue: ctx.stagedQueue
+			};
+
 			try {
 				const parsed = JSON.parse(reader.result);
-				if (!parsed.state)
-					throw new Error('No state object in backup.');
-				const importedReviewLogs = Array.isArray(parsed.state.reviewLogs)
-					? parsed.state.reviewLogs
-					: [];
-				ctx.state = mergeState(defaultState(), parsed.state);
-				delete ctx.state.reviewLogs;
-				const reviewLogImport = await replaceReviewLogs(importedReviewLogs);
-				const reviewLogImportWarning = !reviewLogImport.ok
-					? importedReviewLogs.length
-						? 'Backup imported, but review logs could not be restored. Existing review logs may be unchanged.'
-						: 'Backup imported, but existing review logs could not be cleared.'
-					: importedReviewLogs.length &&
-						reviewLogImport.restoredCount < importedReviewLogs.length
-						? `Backup imported, but only ${reviewLogImport.restoredCount} of ` +
-							`${importedReviewLogs.length} review-log rows were restored.`
-						: 'Backup imported.';
-				disposeTrainer();
-				setPracticeEmptyState(true);
-				setStudyControlsEnabled(false);
+				const validated = validateBackupPayload(parsed);
+				const importedState = mergeState(
+					defaultState(),
+					validated.state
+				);
+				const loaded = await buildStaticData(importedState);
+
+				if (validated.hasReviewLogs) {
+					previousReviewLogs = await getAllReviewLogs();
+					if (!Array.isArray(previousReviewLogs)) {
+						throw new Error(
+							'Existing review logs could not be read, so the import was cancelled.'
+						);
+					}
+				}
+
+				ctx.state = importedState;
+				ctx.hanzi = loaded.hanzi;
+				ctx.lists = loaded.lists;
 				ctx.currentCard = null;
 				ctx.selectedListId = null;
 				ctx.listEditorDrafts = {};
-				ctx.stagedQueue = Array.isArray(ctx.state.session?.stageQueue)
-					? ctx.state.session.stageQueue.slice()
+				ctx.stagedQueue = Array.isArray(importedState.session?.stageQueue)
+					? importedState.session.stageQueue.slice()
 					: [];
-				loadStaticData().then(() => {
-					applyDefaultListSelection();
-					syncVocabularyWithEnabledLists();
-					pruneStagedState();
-					saveState();
-					renderLists();
-					renderBlacklist();
-					renderSettings();
-					renderProgress();
-					nextCard();
-					setText('#backupStatus', reviewLogImportWarning);
-				});
+
+				applyDefaultListSelection();
+				syncVocabularyWithEnabledLists({ save: false });
+				pruneStagedState();
+
+				if (validated.hasReviewLogs) {
+					const result = await replaceReviewLogs(validated.reviewLogs);
+					reviewLogsWereReplaced = result.ok;
+					if (
+						!result.ok ||
+						result.restoredCount !== validated.reviewLogs.length
+					) {
+						throw new Error(
+							'Review logs could not be restored completely.'
+						);
+					}
+				}
+
+				if (!saveState()) {
+					throw new Error('Imported state could not be saved.');
+				}
+
+				disposeTrainer();
+				setPracticeEmptyState(true);
+				setStudyControlsEnabled(false);
+				renderLists();
+				renderBlacklist();
+				renderSettings();
+				renderProgress();
+				nextCard();
+				setText(
+					'#backupStatus',
+					validated.hasReviewLogs
+						? 'Backup imported.'
+						: 'Backup imported. It did not include review logs, so existing review logs were preserved.'
+				);
 			} catch (error) {
-				setText('#backupStatus', `Import failed: ${error.message}`);
+				ctx.state = previous.state;
+				ctx.hanzi = previous.hanzi;
+				ctx.lists = previous.lists;
+				ctx.currentCard = previous.currentCard;
+				ctx.selectedListId = previous.selectedListId;
+				ctx.listEditorDrafts = previous.listEditorDrafts;
+				ctx.stagedQueue = previous.stagedQueue;
+
+				let rollbackWarning = '';
+				if (reviewLogsWereReplaced && previousReviewLogs) {
+					const rollback = await replaceReviewLogs(previousReviewLogs);
+					if (!rollback.ok) {
+						rollbackWarning =
+							' Review-log rollback also failed; restore a known-good backup before continuing.';
+					}
+				}
+				saveState();
+				setText(
+					'#backupStatus',
+					`Import failed: ${error.message} Existing data was kept.${rollbackWarning}`
+				);
 			}
 		};
 		reader.onloadend = () => {

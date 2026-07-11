@@ -211,8 +211,7 @@ export function createListsUi(ctx) {
 				delete state.customLists[id];
 				delete lists[id];
 				delete state.enabledLists[id];
-				for (const entry of Object.values(state.vocabulary))
-					entry.lists = (entry.lists || []).filter((x) => x !== id);
+				syncVocabularyWithEnabledLists({ save: false });
 				const orphanedWords = listWords.filter((word) =>
 					!(state.vocabulary[word]?.lists || []).length
 				);
