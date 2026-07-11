@@ -22,6 +22,7 @@ export const DEFAULT_SCHEDULING = {
 };
 
 const FSRS_STABILITY_MIN = 0.001;
+const FSRS_INITIAL_STABILITY_MIN = 0.1;
 const FSRS_PARAMETER_LOWER_BOUNDS = [
 	0.001, 0.001, 0.001, 0.001, 1.0, 0.001, 0.001,
 	0.001, 0.0, 0.0, 0.001, 0.001, 0.001, 0.001,
@@ -154,7 +155,10 @@ function initFsrsDifficulty(
 }
 
 function initFsrsStability(rating, w = fsrsParameters()) {
-	return constrainStability(w[fsrsRatingNumber(rating) - 1]);
+	return Math.max(
+		FSRS_INITIAL_STABILITY_MIN,
+		constrainStability(w[fsrsRatingNumber(rating) - 1])
+	);
 }
 
 function linearDamping(delta, difficulty) {
@@ -209,7 +213,7 @@ function nextShortTermStability(stability, rating, w = fsrsParameters()) {
 	let increase =
 		Math.exp(w[17] * (fsrsRatingNumber(rating) - 3 + w[18])) *
 		Math.pow(stability, -w[19]);
-	if (rating === 'good' || rating === 'easy') increase = Math.max(increase, 1);
+	if (rating !== 'again') increase = Math.max(increase, 1);
 	return constrainStability(stability * increase);
 }
 
@@ -225,7 +229,8 @@ function fsrsIntervalDays(stability) {
 	);
 }
 
-function fuzzFsrsIntervalDays(intervalDays) {
+function fuzzFsrsIntervalDays(intervalDays, elapsedDays = 0) {
+	elapsedDays = Math.max(0, Math.floor(Number(elapsedDays) || 0));
 	if (intervalDays < 2.5) return intervalDays;
 	let delta = 1;
 	for (const range of FSRS_FUZZ_RANGES) {
@@ -238,6 +243,9 @@ function fuzzFsrsIntervalDays(intervalDays) {
 	let maximum = Math.round(intervalDays + delta);
 	minimum = Math.max(2, minimum);
 	maximum = Math.min(maximum, fsrsMaximumIntervalDays());
+	if (intervalDays > elapsedDays) {
+		minimum = Math.max(minimum, elapsedDays + 1);
+	}
 	minimum = Math.min(minimum, maximum);
 	return Math.min(
 		Math.floor(Math.random() * (maximum - minimum + 1)) + minimum,
@@ -245,9 +253,13 @@ function fuzzFsrsIntervalDays(intervalDays) {
 	);
 }
 
-export function fsrsIntervalSeconds(stability, fuzz = false) {
+export function fsrsIntervalSeconds(
+	stability,
+	fuzz = false,
+	elapsedDays = 0
+) {
 	let days = fsrsIntervalDays(stability);
-	if (fuzz) days = fuzzFsrsIntervalDays(days);
+	if (fuzz) days = fuzzFsrsIntervalDays(days, elapsedDays);
 	return days * ONE_DAY;
 }
 
@@ -347,6 +359,7 @@ export function applyFsrsResult(entry, result, ts = now()) {
 	let difficulty;
 	let stability;
 	let retrievability;
+	let elapsedDays = 0;
 
 	if (!hasMemory) {
 		difficulty = initFsrsDifficulty(rating, w);
@@ -355,7 +368,7 @@ export function applyFsrsResult(entry, result, ts = now()) {
 	} else {
 		const oldDifficulty = Number(fsrs.difficulty);
 		const oldStability = constrainStability(fsrs.stability);
-		const elapsedDays = fsrsElapsedReviewDays(ts, fsrs.lastReview);
+		elapsedDays = fsrsElapsedReviewDays(ts, fsrs.lastReview);
 		retrievability = fsrsForgettingCurve(elapsedDays, oldStability, w);
 		difficulty = nextFsrsDifficulty(oldDifficulty, rating, w);
 		stability = elapsedDays < 1
@@ -377,7 +390,11 @@ export function applyFsrsResult(entry, result, ts = now()) {
 	}
 
 	let nextState = 'review';
-	let intervalSeconds = fsrsIntervalSeconds(stability, true);
+	let intervalSeconds = fsrsIntervalSeconds(
+		stability,
+		true,
+		elapsedDays
+	);
 	if (rating === 'again') {
 		if (!hasMemory || previousState === 'learning') {
 			nextState = 'learning';
