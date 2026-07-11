@@ -43,8 +43,18 @@ export function createBackupApi(ctx) {
 				null
 			);
 
-			if (!manifest) return {};
+			if (
+				!manifest ||
+				typeof manifest !== 'object' ||
+				Array.isArray(manifest)
+			) {
+				return {
+					lists: {},
+					knownListIds: null
+				};
+			}
 
+			const knownListIds = Object.keys(manifest);
 			const results = await Promise.all(
 				Object.entries(manifest).map(
 					async ([id, meta]) => {
@@ -70,30 +80,45 @@ export function createBackupApi(ctx) {
 				)
 			);
 
-			return Object.fromEntries(
-				results.filter(Boolean)
-			);
+			return {
+				lists: Object.fromEntries(
+					results.filter(Boolean)
+				),
+				knownListIds
+			};
 		})();
 
-		const [loadedHanzi, loadedBuiltInLists] =
+		const [loadedHanzi, loadedBuiltInData] =
 			await Promise.all([
 				hanziPromise,
 				builtInListsPromise
 			]);
 
+		const loadedBuiltInLists = loadedBuiltInData.lists;
 		const loadedLists = Object.keys(loadedBuiltInLists).length
 			? loadedBuiltInLists
 			: structuredClone(SAMPLE_LISTS);
+		const customListIds = [];
 
 		for (const [id, custom] of Object.entries(
 			sourceState.customLists || {}
 		)) {
 			loadedLists[id] = structuredClone(custom);
+			customListIds.push(id);
 		}
 
 		return {
 			hanzi: loadedHanzi,
-			lists: loadedLists
+			lists: loadedLists,
+			knownListIds: Array.isArray(loadedBuiltInData.knownListIds)
+				? [
+					...new Set([
+						...loadedBuiltInData.knownListIds,
+						...Object.keys(loadedLists),
+						...customListIds
+					])
+				]
+				: null
 		};
 	}
 
@@ -101,6 +126,7 @@ export function createBackupApi(ctx) {
 		const loaded = await buildStaticData(state);
 		ctx.hanzi = loaded.hanzi;
 		ctx.lists = loaded.lists;
+		ctx.knownListIds = loaded.knownListIds;
 		return loaded;
 	}
 
@@ -394,6 +420,7 @@ export function createBackupApi(ctx) {
 				state: ctx.state,
 				hanzi: ctx.hanzi,
 				lists: ctx.lists,
+				knownListIds: ctx.knownListIds,
 				currentCard: ctx.currentCard,
 				selectedListId: ctx.selectedListId,
 				listEditorDrafts: ctx.listEditorDrafts,
@@ -421,6 +448,7 @@ export function createBackupApi(ctx) {
 				ctx.state = importedState;
 				ctx.hanzi = loaded.hanzi;
 				ctx.lists = loaded.lists;
+				ctx.knownListIds = loaded.knownListIds;
 				ctx.currentCard = null;
 				ctx.selectedListId = null;
 				ctx.listEditorDrafts = {};
@@ -467,6 +495,7 @@ export function createBackupApi(ctx) {
 				ctx.state = previous.state;
 				ctx.hanzi = previous.hanzi;
 				ctx.lists = previous.lists;
+				ctx.knownListIds = previous.knownListIds;
 				ctx.currentCard = previous.currentCard;
 				ctx.selectedListId = previous.selectedListId;
 				ctx.listEditorDrafts = previous.listEditorDrafts;

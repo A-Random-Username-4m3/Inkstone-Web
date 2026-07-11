@@ -85,6 +85,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 	let hanzi = {};
 	let hanziReady = false;
 	let lists = {};
+	let knownListIds = null;
 	let currentCard = null;
 	let stagedQueue = Array.isArray(state.session?.stageQueue)
 		? state.session.stageQueue
@@ -212,6 +213,10 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		get hanziReady() { return hanziReady; },
 		get lists() { return lists; },
 		set lists(value) { lists = value; },
+		get knownListIds() { return knownListIds; },
+		set knownListIds(value) {
+			knownListIds = Array.isArray(value) ? value.slice() : null;
+		},
 		get currentCard() { return currentCard; },
 		set currentCard(value) { currentCard = value; },
 		get stagedQueue() { return stagedQueue; },

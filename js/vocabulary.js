@@ -89,8 +89,11 @@ export function createVocabulary(ctx) {
 
 	function applyDefaultListSelection() {
 		state.enabledLists = state.enabledLists || {};
-		for (const id of Object.keys(state.enabledLists)) {
-			if (!lists[id]) delete state.enabledLists[id];
+		if (Array.isArray(ctx.knownListIds)) {
+			const knownListIds = new Set(ctx.knownListIds);
+			for (const id of Object.keys(state.enabledLists)) {
+				if (!knownListIds.has(id)) delete state.enabledLists[id];
+			}
 		}
 		syncSelectedListForEnabledLists();
 	}
