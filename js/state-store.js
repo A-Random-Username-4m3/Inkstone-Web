@@ -1,5 +1,6 @@
 import { DEFAULT_STUDY_EXAMPLE_LIMIT } from './constants.js';
 import { normalizeScriptMode } from './script-mode.js';
+import { isValidParentLockRecord } from './parent-lock.js';
 
 function isPlainObject(value) {
 	return (
@@ -90,6 +91,7 @@ export function createStateStore({
 			showManualGrading: true,
 			showUndoBlacklistButtons: true,
 			showNextCardButton: true,
+			parentLock: null,
 			snapStrokes: true,
 			maxAdds: 5,
 			maxReviews: 10,
@@ -195,6 +197,11 @@ export function createStateStore({
 				base.settings.showUndoBlacklistButtons !== false;
 			base.settings.showNextCardButton =
 				base.settings.showNextCardButton !== false;
+			base.settings.parentLock = isValidParentLockRecord(
+				base.settings.parentLock
+			)
+				? { ...base.settings.parentLock }
+				: null;
 			base.settings.scriptMode = normalizeScriptMode(
 				base.settings.scriptMode
 			);

@@ -1,6 +1,12 @@
 import { DEFAULT_STUDY_EXAMPLE_LIMIT } from './constants.js';
 import { normalizeScriptMode } from './script-mode.js';
 import {
+	createParentLock,
+	isValidParentLockPin,
+	isValidParentLockRecord,
+	verifyParentLock
+} from './parent-lock.js';
+import {
 	DEFAULT_SCHEDULING,
 	fsrsDesiredRetention,
 	fsrsMaximumIntervalDays,
@@ -19,6 +25,130 @@ export function createSettingsUi(ctx) {
 	const renderProgress = (...args) => ctx.renderProgress(...args);
 	const renderListEditor = (...args) => ctx.renderListEditor(...args);
 	const refreshStudyAfterExternalChange = (...args) => ctx.refreshStudyAfterExternalChange(...args);
+	let unlockedParentLockHash = null;
+	let parentLockMessage = '';
+
+
+	function parentLockRecord() {
+		return isValidParentLockRecord(state.settings?.parentLock)
+			? state.settings.parentLock
+			: null;
+	}
+
+	function hasParentLock() {
+		return !!parentLockRecord();
+	}
+
+	function parentControlsUnlocked() {
+		const record = parentLockRecord();
+		return !!record && unlockedParentLockHash === record.hash;
+	}
+
+	function parentSettingsLocked() {
+		return hasParentLock() && !parentControlsUnlocked();
+	}
+
+	function clearParentLockPinInput() {
+		const input = $('#parentLockPin');
+		if (input) input.value = '';
+	}
+
+	function renderParentLock() {
+		const locked = parentSettingsLocked();
+		const configured = hasParentLock();
+		const undoSetting = $('#settingShowUndoBlacklistButtons');
+		const nextSetting = $('#settingShowNextCardButton');
+		const manualGradingSetting = $('#settingShowManualGrading');
+		if (undoSetting) undoSetting.disabled = locked;
+		if (nextSetting) nextSetting.disabled = locked;
+		if (manualGradingSetting) manualGradingSetting.disabled = locked;
+
+		const primary = $('#btnParentLockPrimary');
+		if (primary) {
+			primary.textContent = configured && parentControlsUnlocked()
+				? 'Unlocked'
+				: configured
+					? 'Unlock'
+					: 'Set PIN';
+			primary.disabled = configured && parentControlsUnlocked();
+		}
+		$('#btnParentLockNow')?.classList.toggle(
+			'hidden',
+			!configured || !parentControlsUnlocked()
+		);
+		$('#btnParentLockRemove')?.classList.toggle(
+			'hidden',
+			!configured || !parentControlsUnlocked()
+		);
+
+		let status = 'No PIN set. The protected Study controls can be changed freely.';
+		if (configured && locked) {
+			status = 'Locked. Enter the parent/teacher PIN to change Undo / Blacklist, Next card, or manual grading visibility.';
+		} else if (configured) {
+			status = 'Unlocked for this Settings visit. Leaving Settings will lock these controls again.';
+		}
+		ctx.setText('#parentLockStatus', parentLockMessage || status);
+	}
+
+	function updateProtectedStudySetting(key, value) {
+		if (parentSettingsLocked()) {
+			parentLockMessage = 'Enter the parent/teacher PIN before changing this setting.';
+			renderSettings();
+			return false;
+		}
+		parentLockMessage = '';
+		updateSetting(key, value);
+		return true;
+	}
+
+	async function setOrUnlockParentLock(pin) {
+		const normalizedPin = String(pin || '').trim();
+		if (!isValidParentLockPin(normalizedPin)) {
+			parentLockMessage = 'PIN must contain 4 to 8 digits.';
+			renderParentLock();
+			return false;
+		}
+		try {
+			if (!hasParentLock()) {
+				state.settings.parentLock = await createParentLock(normalizedPin);
+				unlockedParentLockHash = null;
+				parentLockMessage = 'PIN set. Protected Study controls are now locked.';
+				saveState();
+			} else if (await verifyParentLock(normalizedPin, state.settings.parentLock)) {
+				unlockedParentLockHash = state.settings.parentLock.hash;
+				parentLockMessage = 'PIN accepted. Protected settings are unlocked until you leave Settings.';
+			} else {
+				parentLockMessage = 'Incorrect PIN.';
+				renderParentLock();
+				return false;
+			}
+			clearParentLockPinInput();
+			renderSettings();
+			return true;
+		} catch (error) {
+			parentLockMessage = error?.message || 'Could not update the parent/teacher lock.';
+			renderParentLock();
+			return false;
+		}
+	}
+
+	function lockParentControls() {
+		unlockedParentLockHash = null;
+		parentLockMessage = '';
+		clearParentLockPinInput();
+		renderParentLock();
+	}
+
+	function removeParentLock() {
+		if (!hasParentLock() || !parentControlsUnlocked()) return false;
+		state.settings.parentLock = null;
+		unlockedParentLockHash = null;
+		parentLockMessage = 'Parent/teacher PIN removed.';
+		clearParentLockPinInput();
+		saveState();
+		renderSettings();
+		return true;
+	}
 
 	function positiveSetting(key, fallback, min = 0) {
 		const value = Number(state.settings?.[key]);
@@ -95,6 +225,7 @@ export function createSettingsUi(ctx) {
 		if ($('#settingShowNextCardButton'))
 			$('#settingShowNextCardButton').checked = showNextCardButton;
 		$('#btnNext')?.classList.toggle('hidden', !showNextCardButton);
+		renderParentLock();
 		if ($('#settingSnapStrokes'))
 			$('#settingSnapStrokes').checked = !!state.settings.snapStrokes;
 		if ($('#settingStage2KeepUserStrokes'))
@@ -191,6 +322,10 @@ export function createSettingsUi(ctx) {
 		relearningStepInterval,
 		renderSettings,
 		updateSetting,
+		updateProtectedStudySetting,
+		setOrUnlockParentLock,
+		lockParentControls,
+		removeParentLock,
 		updateDebugNow
 	};
 }

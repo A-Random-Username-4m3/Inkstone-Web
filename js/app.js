@@ -403,6 +403,10 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		relearningStepInterval,
 		renderSettings,
 		updateSetting,
+		updateProtectedStudySetting,
+		setOrUnlockParentLock,
+		lockParentControls,
+		removeParentLock,
 		updateDebugNow
 	} = settingsApi;
 	const {
@@ -589,12 +593,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		);
 		bind('#settingShowManualGrading', 'change', (e) => {
 			const showManualGrading = e.target.checked;
-
-			updateSetting(
-				'showManualGrading',
-				showManualGrading
-			);
-
+			if (!updateProtectedStudySetting('showManualGrading', showManualGrading)) return;
 			$('#manualGradePanel')?.classList.toggle(
 				'hidden',
 				!showManualGrading
@@ -602,14 +601,27 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		});
 		bind('#settingShowUndoBlacklistButtons', 'change', (e) => {
 			const showButtons = e.target.checked;
-			updateSetting('showUndoBlacklistButtons', showButtons);
+			if (!updateProtectedStudySetting('showUndoBlacklistButtons', showButtons)) return;
 			$('#btnUndo')?.classList.toggle('hidden', !showButtons);
 			$('#btnBlacklistCard')?.classList.toggle('hidden', !showButtons);
 		});
 		bind('#settingShowNextCardButton', 'change', (e) => {
 			const showButton = e.target.checked;
-			updateSetting('showNextCardButton', showButton);
+			if (!updateProtectedStudySetting('showNextCardButton', showButton)) return;
 			$('#btnNext')?.classList.toggle('hidden', !showButton);
+		});
+		bind('#btnParentLockPrimary', 'click', async () => {
+			await setOrUnlockParentLock($('#parentLockPin')?.value || '');
+		});
+		bind('#parentLockPin', 'keydown', async (e) => {
+			if (e.key !== 'Enter') return;
+			e.preventDefault();
+			await setOrUnlockParentLock(e.target.value);
+		});
+		bind('#btnParentLockNow', 'click', lockParentControls);
+		bind('#btnParentLockRemove', 'click', () => {
+			if (!confirm('Remove the parent/teacher PIN?')) return;
+			removeParentLock();
 		});
 		bind('#settingSnapStrokes', 'change', (e) =>
 			updateSetting('snapStrokes', e.target.checked)
@@ -744,6 +756,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 	}
 
 	function showTab(tab) {
+		if (tab !== 'settings') lockParentControls();
 	playSound('tabChange');
 
 		$$('.tabs button').forEach((button) =>

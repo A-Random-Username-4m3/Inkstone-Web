@@ -265,6 +265,18 @@
 						<span>Show manual grading buttons</span>
 						<input type="checkbox" id="settingShowManualGrading">
 					</label>
+					<div class="setting setting-block parent-lock-setting">
+						<strong>Teacher / parent lock</strong>
+						<p id="parentLockStatus" class="feedback"></p>
+						<div class="inline-form">
+							<input id="parentLockPin" type="password" inputmode="numeric"
+							  autocomplete="off" maxlength="8"
+							  placeholder="4–8 digit PIN" aria-label="Parent or teacher PIN">
+							<button id="btnParentLockPrimary" type="button">Set PIN</button>
+							<button id="btnParentLockNow" type="button" class="hidden">Lock now</button>
+							<button id="btnParentLockRemove" type="button" class="danger hidden">Remove PIN</button>
+						</div>
+					</div>
 				</article>
 				<article class="card">
 					<h2>FSRS scheduler</h2>

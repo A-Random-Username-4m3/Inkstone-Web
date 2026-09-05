@@ -1,3 +1,5 @@
+import { isValidParentLockRecord } from './parent-lock.js';
+
 function isPlainObject(value) {
 	return (
 		value !== null &&
@@ -139,6 +141,11 @@ export function validateBackupPayload(payload) {
 	if (sourceState.session?.stageQueue !== undefined) {
 		if (!Array.isArray(sourceState.session.stageQueue)) {
 			throw new Error('state.session.stageQueue must be an array.');
+		}
+	}
+	if (sourceState.settings?.parentLock !== undefined && sourceState.settings.parentLock !== null) {
+		if (!isValidParentLockRecord(sourceState.settings.parentLock)) {
+			throw new Error('state.settings.parentLock is not a valid parent/teacher lock record.');
 		}
 	}
 	if (sourceState.enabledLists !== undefined) {

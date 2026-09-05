@@ -734,6 +734,9 @@ input[type="checkbox"] {
 .setting select { min-width: 160px; }
 .setting-block { align-items: stretch; flex-direction: column; }
 .setting-block textarea { width: 100%; min-height: 86px; }
+.parent-lock-setting .inline-form { margin-top: 2px; }
+.parent-lock-setting .feedback { margin-top: 2px; }
+.parent-lock-setting input { max-width: 220px; }
 .file-button {
 	position: relative;
 	overflow: hidden;

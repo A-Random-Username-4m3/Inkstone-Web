@@ -1,4 +1,4 @@
-const CACHE_NAME = 'inkstone-static-a0.2.15.3';
+const CACHE_NAME = 'inkstone-static-a0.2.15.4';
 const CORE_ASSETS = [
 	'./',
 	'./index.html',
@@ -17,6 +17,7 @@ const CORE_ASSETS = [
 	'./js/session-queue.js',
 	'./js/vocabulary.js',
 	'./js/settings-ui.js',
+	'./js/parent-lock.js',
 	'./js/lookup-ui.js',
 	'./js/word-examples.js',
 	'./js/backup.js',
