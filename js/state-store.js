@@ -88,6 +88,8 @@ export function createStateStore({
 		settings: {
 			revealOrder: true,
 			showManualGrading: true,
+			showUndoBlacklistButtons: true,
+			showNextCardButton: true,
 			snapStrokes: true,
 			maxAdds: 5,
 			maxReviews: 10,
@@ -189,6 +191,10 @@ export function createStateStore({
 				!!base.settings.examplesActiveListsOnly;
 			base.settings.showManualGrading =
 				base.settings.showManualGrading !== false;
+			base.settings.showUndoBlacklistButtons =
+				base.settings.showUndoBlacklistButtons !== false;
+			base.settings.showNextCardButton =
+				base.settings.showNextCardButton !== false;
 			base.settings.scriptMode = normalizeScriptMode(
 				base.settings.scriptMode
 			);

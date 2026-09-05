@@ -600,6 +600,17 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 				!showManualGrading
 			);
 		});
+		bind('#settingShowUndoBlacklistButtons', 'change', (e) => {
+			const showButtons = e.target.checked;
+			updateSetting('showUndoBlacklistButtons', showButtons);
+			$('#btnUndo')?.classList.toggle('hidden', !showButtons);
+			$('#btnBlacklistCard')?.classList.toggle('hidden', !showButtons);
+		});
+		bind('#settingShowNextCardButton', 'change', (e) => {
+			const showButton = e.target.checked;
+			updateSetting('showNextCardButton', showButton);
+			$('#btnNext')?.classList.toggle('hidden', !showButton);
+		});
 		bind('#settingSnapStrokes', 'change', (e) =>
 			updateSetting('snapStrokes', e.target.checked)
 		);

@@ -81,6 +81,20 @@ export function createSettingsUi(ctx) {
 			'hidden',
 			!showManualGrading
 		);
+		const showUndoBlacklistButtons =
+			state.settings.showUndoBlacklistButtons !== false;
+		if ($('#settingShowUndoBlacklistButtons'))
+			$('#settingShowUndoBlacklistButtons').checked =
+				showUndoBlacklistButtons;
+		$('#btnUndo')?.classList.toggle('hidden', !showUndoBlacklistButtons);
+		$('#btnBlacklistCard')?.classList.toggle(
+			'hidden',
+			!showUndoBlacklistButtons
+		);
+		const showNextCardButton = state.settings.showNextCardButton !== false;
+		if ($('#settingShowNextCardButton'))
+			$('#settingShowNextCardButton').checked = showNextCardButton;
+		$('#btnNext')?.classList.toggle('hidden', !showNextCardButton);
 		if ($('#settingSnapStrokes'))
 			$('#settingSnapStrokes').checked = !!state.settings.snapStrokes;
 		if ($('#settingStage2KeepUserStrokes'))
