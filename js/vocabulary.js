@@ -5,6 +5,32 @@ export function createVocabulary(ctx) {
 	const hanzi = ctx.liveHanzi();
 	const ensureFsrsState = (...args) => ctx.ensureFsrsState(...args);
 	const saveState = (...args) => ctx.saveState(...args);
+	const listRowIndexCache = new WeakMap();
+
+
+	function getListRowIndex(list) {
+		const rows = Array.isArray(list?.rows) ? list.rows : [];
+		const cached = list && typeof list === 'object'
+			? listRowIndexCache.get(list)
+			: null;
+		if (
+			cached &&
+			cached.rows === rows &&
+			cached.length === rows.length
+		) return cached.index;
+
+		const index = new Map();
+		for (const row of rows) {
+			const keys = new Set([rowCanonicalWord(row), ...rowWords(row)]);
+			for (const key of keys) {
+				if (key && !index.has(key)) index.set(key, row);
+			}
+		}
+		if (list && typeof list === 'object') {
+			listRowIndexCache.set(list, { rows, length: rows.length, index });
+		}
+		return index;
+	}
 	function hasEnabledList(word) {
 		const entry = state.vocabulary[word];
 		return (
@@ -179,9 +205,7 @@ export function createVocabulary(ctx) {
 			...entryListIds.filter((listId) => !state.enabledLists?.[listId])
 		];
 		for (const listId of preferredListIds) {
-			const found = lists[listId]?.rows?.find(
-				(row) => row.simplified === word || row.traditional === word
-			);
+			const found = getListRowIndex(lists[listId]).get(word);
 			if (found) return found;
 		}
 		return {
