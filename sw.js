@@ -1,4 +1,5 @@
-const CACHE_NAME = 'inkstone-static-a0.2.15.6';
+const CACHE_PREFIX = 'inkstone-static-';
+const CACHE_NAME = `${CACHE_PREFIX}a0.2.15.7-${dataRevision()}`;
 const CORE_ASSETS = [
 	'./',
 	'./index.html',
@@ -23,6 +24,8 @@ const CORE_ASSETS = [
 	'./js/backup.js',
 	'./js/review-log-store.js',
 	'./js/script-mode.js',
+	'./js/chinese-card-id.js',
+	'./js/record-keys.js',
 	'./manifest.webmanifest',
 	'./data/hanzi.json',
 	'./data/lists.json',
@@ -56,6 +59,10 @@ const OPTIONAL_ASSETS = [
 	'./wav/wrongstroke.wav'
 ];
 
+function dataRevision() {
+	return 'baseline'; // INKSTONE_DATA_REVISION
+}
+
 self.addEventListener('install', (event) => {
 	event.waitUntil(
 		caches.open(CACHE_NAME)
@@ -81,7 +88,7 @@ self.addEventListener('activate', (event) => {
 			.then(
 				(keys) => Promise.all(
 					keys.filter(
-						(key) => key !== CACHE_NAME
+						(key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME
 					).map((key) => caches.delete(key))
 				)
 			)

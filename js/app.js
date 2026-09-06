@@ -31,8 +31,9 @@ import { createWordExamples } from './word-examples.js';
 import { createBackupApi } from './backup.js';
 import { createReviewLogStore } from './review-log-store.js';
 import { normalizeScriptMode, rowScriptWord } from './script-mode.js';
+import { migrateChineseStudyIds } from './chinese-card-id.js';
 
-const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
+const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 	const STORAGE_KEY = 'inkstone.web.state.v1';
 	const NEXT_CARD_DELAY_MS = 650;
 	const STAGED_CARD_SPACING_TURNS = 1;
@@ -275,6 +276,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		ensureVocabularyEntry: (...args) => vocabularyApi.ensureVocabularyEntry(...args),
 		getEntryRow: (...args) => vocabularyApi.getEntryRow(...args),
 		resolveCanonicalWord: (...args) => vocabularyApi.resolveCanonicalWord(...args),
+		resolveCanonicalWords: (...args) => vocabularyApi.resolveCanonicalWords(...args),
 		getActiveVocabulary: (...args) => vocabularyApi.getActiveVocabulary(...args),
 		orderNewItemsByListPosition: (...args) => vocabularyApi.orderNewItemsByListPosition(...args),
 		firstNewByListPosition: (...args) => vocabularyApi.firstNewByListPosition(...args),
@@ -348,6 +350,7 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		syncVocabularyWithEnabledLists,
 		ensureVocabularyEntry,
 		getEntryRow,
+		resolveCanonicalWords,
 		getActiveVocabulary,
 		orderNewItemsByListPosition,
 		firstNewByListPosition
@@ -456,10 +459,16 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 		initializeAudio();
 		bindUI();
 		registerServiceWorker();
-		await Promise.all([
-			refreshReviewLogCount(),
-			loadStaticData()
-		]);
+		await loadStaticData();
+		const { primaryMigrations } = migrateChineseStudyIds(state, lists);
+		if (primaryMigrations.size) {
+			await reviewLogStore.remapCardIds(primaryMigrations);
+			stagedQueue = Array.isArray(state.session?.stageQueue)
+				? state.session.stageQueue.slice()
+				: [];
+			persistState(state);
+		}
+		await refreshReviewLogCount();
 		applyDefaultListSelection();
 		syncVocabularyWithEnabledLists();
 		renderLists();
@@ -726,11 +735,26 @@ const APP_VERSION = 'inkstone-static-2.10.0-audio-implementation';
 
 		bind('#btnBlacklistAdd', 'click', () => {
 			const input = $('#blacklistWordInput');
+			const status = $('#blacklistStatus');
 			const word = input.value.trim();
 			if (!word) return;
-			setBlacklistedWord(word, true);
+			const matches = resolveCanonicalWords(word);
+			if (!matches.length) {
+				if (status) status.textContent = `No vocabulary card matches “${word}”.`;
+				return;
+			}
+			if (matches.length > 1) {
+				if (status) {
+					status.textContent =
+						`“${word}” matches ${matches.length} pronunciation/script cards. ` +
+						'Blacklist the intended card from Study or its list row.';
+				}
+				return;
+			}
+			setBlacklistedWord(matches[0], true);
 			playSound('addBlacklist');
 			input.value = '';
+			if (status) status.textContent = '';
 			refreshVocabularyViews();
 			nextCard();
 		});

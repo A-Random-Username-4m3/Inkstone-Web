@@ -1,4 +1,5 @@
 import { isValidParentLockRecord } from './parent-lock.js';
+import { isSafeRecordKey } from './record-keys.js';
 
 function isPlainObject(value) {
 	return (
@@ -6,6 +7,33 @@ function isPlainObject(value) {
 		typeof value === 'object' &&
 		!Array.isArray(value)
 	);
+}
+
+
+function inkstoneEdition(value) {
+	const text = String(value || '').trim().toLowerCase();
+	if (!text) return null;
+	if (text.startsWith('inkstone-japanese')) return 'japanese';
+	if (text.startsWith('inkstone-static') || text.startsWith('inkstone-chinese')) return 'chinese';
+	return null;
+}
+
+function rejectForeignEdition(payload) {
+	const labels = [payload?.app, payload?.state?.version];
+	for (const label of labels) {
+		const edition = inkstoneEdition(label);
+		if (edition && edition !== 'chinese') {
+			throw new Error('This backup belongs to Inkstone Japanese, not Inkstone Chinese.');
+		}
+	}
+}
+
+function validateRecordKeys(value, path) {
+	for (const key of Object.keys(value || {})) {
+		if (!isSafeRecordKey(key)) {
+			throw new Error(`${path}.${key} uses a reserved object key.`);
+		}
+	}
 }
 
 function requirePlainObject(value, path) {
@@ -47,6 +75,7 @@ function validateListRow(row, path) {
 
 function validateCustomLists(customLists) {
 	requirePlainObject(customLists, 'state.customLists');
+	validateRecordKeys(customLists, 'state.customLists');
 	for (const [id, list] of Object.entries(customLists)) {
 		const path = `state.customLists.${id}`;
 		requirePlainObject(list, path);
@@ -67,6 +96,7 @@ function validateCustomLists(customLists) {
 
 function validateVocabulary(vocabulary) {
 	requirePlainObject(vocabulary, 'state.vocabulary');
+	validateRecordKeys(vocabulary, 'state.vocabulary');
 	for (const [word, entry] of Object.entries(vocabulary)) {
 		const path = `state.vocabulary.${word}`;
 		requirePlainObject(entry, path);
@@ -113,6 +143,7 @@ function validateReviewLog(log, index) {
 export function validateBackupPayload(payload) {
 	requirePlainObject(payload, 'Backup');
 	requirePlainObject(payload.state, 'state');
+	rejectForeignEdition(payload);
 
 	const sourceState = payload.state;
 	const objectFields = [
@@ -135,6 +166,9 @@ export function validateBackupPayload(payload) {
 	) {
 		throw new Error('state.blacklist must be an object or array.');
 	}
+	if (isPlainObject(sourceState.blacklist)) {
+		validateRecordKeys(sourceState.blacklist, 'state.blacklist');
+	}
 	if (sourceState.history !== undefined && !Array.isArray(sourceState.history)) {
 		throw new Error('state.history must be an array.');
 	}
@@ -149,6 +183,7 @@ export function validateBackupPayload(payload) {
 		}
 	}
 	if (sourceState.enabledLists !== undefined) {
+		validateRecordKeys(sourceState.enabledLists, 'state.enabledLists');
 		for (const [id, enabled] of Object.entries(sourceState.enabledLists)) {
 			if (typeof enabled !== 'boolean') {
 				throw new Error(`state.enabledLists.${id} must be a boolean.`);

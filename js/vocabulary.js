@@ -1,4 +1,5 @@
 import { rowCanonicalWord, rowScriptWord, rowWords } from './script-mode.js';
+import { legacyRowWord, isStableChineseStudyId } from './chinese-card-id.js';
 export function createVocabulary(ctx) {
 	const state = ctx.liveState();
 	const lists = ctx.liveLists();
@@ -149,7 +150,7 @@ export function createVocabulary(ctx) {
 				const word = rowCanonicalWord(row);
 				const studyWord = rowScriptWord(row, state.settings);
 				if (!word || !canStudyWord(studyWord)) continue;
-				ensureVocabularyEntry(word);
+				ensureVocabularyEntry(word, null, row);
 			}
 		}
 
@@ -162,7 +163,20 @@ export function createVocabulary(ctx) {
 	}
 
 
-	function ensureVocabularyEntry(word, listId = null) {
+	function ensureVocabularyEntry(word, listId = null, row = null) {
+		if (!state.vocabulary[word] && row) {
+			const legacyWord = legacyRowWord(row);
+			const legacyEntry = legacyWord && state.vocabulary[legacyWord];
+			if (legacyEntry && typeof legacyEntry === 'object') {
+				state.vocabulary[word] = {
+					...legacyEntry,
+					word,
+					lists: Array.isArray(legacyEntry.lists)
+						? legacyEntry.lists.slice()
+						: []
+				};
+			}
+		}
 		if (!state.vocabulary[word]) {
 			state.vocabulary[word] = {
 				word,
@@ -174,6 +188,13 @@ export function createVocabulary(ctx) {
 			};
 		}
 		const entry = state.vocabulary[word];
+		if (row) {
+			entry.simplified = String(row.simplified || '').trim();
+			entry.traditional = String(row.traditional || '').trim();
+			entry.numbered = String(row.numbered || '').trim();
+			entry.pinyin = String(row.pinyin || '').trim();
+			entry.definition = String(row.definition || '').trim();
+		}
 		delete entry.failed;
 		entry.lists = Array.isArray(entry.lists) ? entry.lists : [];
 		if (listId && !entry.lists.includes(listId)) entry.lists.push(listId);
@@ -185,16 +206,29 @@ export function createVocabulary(ctx) {
 	}
 
 
-	function resolveCanonicalWord(value) {
-		const word = String(value || '').trim();
-		if (!word) return '';
-		for (const list of Object.values(lists)) {
+	function resolveCanonicalWords(value) {
+		const input = String(value || '').trim();
+		if (!input) return [];
+		if (isStableChineseStudyId(input)) return [input];
+		const matches = [];
+		const seen = new Set();
+		for (const list of Object.values(lists || {})) {
 			for (const row of list.rows || []) {
-				if (!rowWords(row).includes(word)) continue;
-				return rowCanonicalWord(row) || word;
+				if (!rowWords(row).includes(input)) continue;
+				const studyId = rowCanonicalWord(row);
+				if (!studyId || seen.has(studyId)) continue;
+				seen.add(studyId);
+				matches.push(studyId);
 			}
 		}
-		return word;
+		return matches;
+	}
+
+
+	function resolveCanonicalWord(value) {
+		const input = String(value || '').trim();
+		if (!input) return '';
+		return resolveCanonicalWords(input)[0] || input;
 	}
 
 
@@ -204,9 +238,26 @@ export function createVocabulary(ctx) {
 			...entryListIds.filter((listId) => state.enabledLists?.[listId]),
 			...entryListIds.filter((listId) => !state.enabledLists?.[listId])
 		];
+		const searched = new Set();
 		for (const listId of preferredListIds) {
+			searched.add(listId);
 			const found = getListRowIndex(lists[listId]).get(word);
 			if (found) return found;
+		}
+		for (const [listId, list] of Object.entries(lists || {})) {
+			if (searched.has(listId)) continue;
+			const found = getListRowIndex(list).get(word);
+			if (found) return found;
+		}
+		const entry = state.vocabulary[word];
+		if (entry?.simplified || entry?.traditional) {
+			return {
+				simplified: entry.simplified || entry.traditional || '',
+				traditional: entry.traditional || entry.simplified || '',
+				numbered: entry.numbered || '',
+				pinyin: entry.pinyin || '',
+				definition: entry.definition || ''
+			};
 		}
 		return {
 			simplified: word,
@@ -277,6 +328,7 @@ export function createVocabulary(ctx) {
 		ensureVocabularyEntry,
 		getEntryRow,
 		resolveCanonicalWord,
+		resolveCanonicalWords,
 		getActiveVocabulary,
 		orderNewItemsByListPosition,
 		firstNewByListPosition

@@ -18,6 +18,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from data_revision import bump_data_revision
+
 IDS_ARITY = {
 		"⿰": 2, "⿱": 2, "⿴": 2, "⿵": 2, "⿶": 2, "⿷": 2,
 		"⿸": 2, "⿹": 2, "⿺": 2, "⿻": 2, "⿳": 3, "⿲": 3,
@@ -200,6 +202,8 @@ def main() -> None:
 		chars_path.write_text("\n".join(data.keys()) + "\n", encoding="utf-8")
 		print(f"Wrote {len(data)} characters to {args.output}")
 		print(f"Wrote character index to {chars_path}")
+		revision = bump_data_revision()
+		print(f"Updated offline data cache revision to {revision}.")
 
 
 if __name__ == "__main__":

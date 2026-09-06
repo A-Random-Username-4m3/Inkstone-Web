@@ -1,6 +1,7 @@
 import { DEFAULT_STUDY_EXAMPLE_LIMIT } from './constants.js';
 import { normalizeScriptMode } from './script-mode.js';
 import { isValidParentLockRecord } from './parent-lock.js';
+import { isSafeRecordKey } from './record-keys.js';
 
 function isPlainObject(value) {
 	return (
@@ -17,7 +18,7 @@ export function normalizeBlacklist(blacklist) {
 	if (Array.isArray(blacklist)) {
 		return Object.fromEntries(
 			blacklist
-				.filter(Boolean)
+				.filter((item) => item && isSafeRecordKey(item.word || item))
 				.map((item) => [
 					item.word || item,
 					typeof item === 'string' ? { word: item } : item
@@ -26,7 +27,7 @@ export function normalizeBlacklist(blacklist) {
 	}
 	const result = {};
 	for (const [word, value] of Object.entries(blacklist || {})) {
-		if (!value) continue;
+		if (!isSafeRecordKey(word) || !value) continue;
 		result[word] =
 			typeof value === 'object' ? { word, ...value } : { word };
 	}
@@ -128,6 +129,7 @@ export function createStateStore({
 
 	function mergeState(base, saved, root = true) {
 		for (const [key, value] of Object.entries(normalizeObject(saved))) {
+			if (!isSafeRecordKey(key)) continue;
 			if (
 				value &&
 				typeof value === 'object' &&
@@ -157,7 +159,7 @@ export function createStateStore({
 		base.session = isPlainObject(base.session) ? base.session : {};
 
 		for (const [word, entry] of Object.entries(base.vocabulary)) {
-			if (!isPlainObject(entry)) {
+			if (!isSafeRecordKey(word) || !isPlainObject(entry)) {
 				delete base.vocabulary[word];
 				continue;
 			}

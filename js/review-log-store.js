@@ -157,6 +157,41 @@ export function createReviewLogStore({ setStatus } = {}) {
 		);
 	}
 
+	async function remapCardIds(migrations) {
+		const mapping = migrations instanceof Map
+			? migrations
+			: new Map(Object.entries(migrations || {}));
+		if (!mapping.size) return 0;
+		return withDb(
+			(db) => new Promise((resolve, reject) => {
+				const transaction = db.transaction(STORE_NAME, 'readwrite');
+				const store = transaction.objectStore(STORE_NAME);
+				let updated = 0;
+				transaction.oncomplete = () => resolve(updated);
+				transaction.onerror = () => reject(transaction.error);
+				transaction.onabort = () => reject(
+					transaction.error || new Error('IndexedDB transaction aborted.')
+				);
+				const request = store.openCursor();
+				request.onsuccess = () => {
+					const cursor = request.result;
+					if (!cursor) return;
+					const value = cursor.value;
+					const cardId = String(value?.card_id || '');
+					const migrated = mapping.get(cardId);
+					if (migrated && migrated !== cardId) {
+						cursor.update({ ...value, card_id: migrated });
+						updated += 1;
+					}
+					cursor.continue();
+				};
+				request.onerror = () => reject(request.error);
+			}),
+			0,
+			'Review-log card IDs could not be migrated.'
+		);
+	}
+
 	async function deleteByCardIds(cardIds) {
 		const uniqueIds = [
 			...new Set((cardIds || []).map((id) => String(id)).filter(Boolean))
@@ -200,6 +235,7 @@ export function createReviewLogStore({ setStatus } = {}) {
 		getAll,
 		count,
 		clear,
+		remapCardIds,
 		deleteByCardIds
 	};
 }

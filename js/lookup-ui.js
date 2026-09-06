@@ -138,6 +138,11 @@ export function createLookupUi(ctx) {
 			.replace(/[^a-zA-Z0-9_.-]/g, '-');
 		const name = ($('#customListName')?.value || id).trim();
 		if (!id) return setText('#listImportStatus', 'Please enter a list id.');
+		if (!isSafeRecordKey(id))
+			return setText(
+				'#listImportStatus',
+				`List id "${id}" is reserved. Choose another id.`
+			);
 		if (lists[id] && !state.customLists[id])
 			return setText(
 				'#listImportStatus',

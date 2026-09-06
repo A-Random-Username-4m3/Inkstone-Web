@@ -214,37 +214,17 @@ export function createListsUi(ctx) {
 			});
 			const button = $('button', row);
 			button.disabled = !state.customLists[id];
-			button.addEventListener('click', async () => {
+			button.addEventListener('click', () => {
 				if (
 					!state.customLists[id] ||
-					!confirm(`Delete imported list ${list.name}?`)
+					!confirm(`Delete imported list ${list.name}? Study progress will be kept.`)
 				)
 					return;
-				const listRows = list.rows || [];
-				const listWords = listRows
-					.map((item) => rowCanonicalWord(item))
-					.filter(Boolean);
 				delete state.customLists[id];
 				delete lists[id];
 				delete state.enabledLists[id];
 				syncVocabularyWithEnabledLists({ save: false });
-				const orphanedWords = listWords.filter((word) =>
-					!(state.vocabulary[word]?.lists || []).length
-				);
-				const orphanedSet = new Set(orphanedWords);
-				const orphanedRows = listRows.filter((row) =>
-					orphanedSet.has(rowCanonicalWord(row))
-				);
-				for (const word of orphanedWords) {
-					clearExternalWordStudyState(word);
-					delete state.vocabulary[word];
-				}
-				for (const row of orphanedRows) {
-					for (const key of rowWords(row)) delete state.blacklist[key];
-					delete state.blacklist[rowCanonicalWord(row)];
-				}
 				if (ctx.selectedListId === id) ctx.selectedListId = null;
-				await clearReviewLogsForCards(orphanedWords);
 				pruneStagedState();
 				saveState();
 				renderLists();

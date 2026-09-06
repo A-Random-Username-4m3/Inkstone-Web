@@ -1,5 +1,6 @@
 import { SAMPLE_DATA, SAMPLE_LISTS } from './sample-data.js';
 import { validateBackupPayload } from './backup-validation.js';
+import { migrateChineseStudyIds, remapReviewLogCardIds } from './chinese-card-id.js';
 
 const FIRST_FSRS_OPTIMIZATION_LOGS = 400;
 const FSRS_OPTIMIZATION_SNOOZE_DAYS = 30;
@@ -435,6 +436,12 @@ export function createBackupApi(ctx) {
 					validated.state
 				);
 				const loaded = await buildStaticData(importedState);
+				const { primaryMigrations } = migrateChineseStudyIds(
+					importedState, loaded.lists
+				);
+				const importedReviewLogs = validated.hasReviewLogs
+					? remapReviewLogCardIds(validated.reviewLogs, primaryMigrations)
+					: null;
 
 				if (validated.hasReviewLogs) {
 					previousReviewLogs = await getAllReviewLogs();
@@ -461,11 +468,11 @@ export function createBackupApi(ctx) {
 				pruneStagedState();
 
 				if (validated.hasReviewLogs) {
-					const result = await replaceReviewLogs(validated.reviewLogs);
+					const result = await replaceReviewLogs(importedReviewLogs);
 					reviewLogsWereReplaced = result.ok;
 					if (
 						!result.ok ||
-						result.restoredCount !== validated.reviewLogs.length
+						result.restoredCount !== importedReviewLogs.length
 					) {
 						throw new Error(
 							'Review logs could not be restored completely.'

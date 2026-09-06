@@ -580,6 +580,10 @@ export class PracticeCanvas {
 	}
 	reveal() {
 		if (!this.character) return;
+		if (this.revealed) {
+			this.setFeedback('This character is already revealed.', 'info');
+			return;
+		}
 		this.pushPenaltyUndo('reveal penalty');
 		this.revealed = true;
 		this.penalties += 4;

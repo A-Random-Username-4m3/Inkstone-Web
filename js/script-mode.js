@@ -1,3 +1,4 @@
+import { stableChineseStudyId } from './chinese-card-id.js';
 const SCRIPT_MODE_SIMPLIFIED = 'simplified';
 const SCRIPT_MODE_TRADITIONAL = 'traditional';
 
@@ -24,7 +25,7 @@ function rowTraditional(row) {
 }
 
 export function rowCanonicalWord(row) {
-	return rowSimplified(row) || rowTraditional(row);
+	return stableChineseStudyId(row);
 }
 
 export function rowScriptWord(row, settingsOrMode = SCRIPT_MODE_SIMPLIFIED) {
