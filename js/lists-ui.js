@@ -10,6 +10,22 @@ import {
 	fsrsDesiredRetention
 } from './fsrs.js';
 
+export function removeCustomListRowByIndex(state, lists, listId, sourceIndex) {
+	const list = state?.customLists?.[listId];
+	if (
+		!list ||
+		!Array.isArray(list.rows) ||
+		!Number.isInteger(sourceIndex) ||
+		sourceIndex < 0 ||
+		sourceIndex >= list.rows.length
+	) return null;
+
+	const [removedRow] = list.rows.splice(sourceIndex, 1);
+	lists[listId] = list;
+	return removedRow || null;
+}
+
+
 export function createListsUi(ctx) {
 	const state = ctx.liveState();
 	const lists = ctx.liveLists();
@@ -394,11 +410,12 @@ export function createListsUi(ctx) {
 				visibleRows.innerHTML = filteredRecords.length
 					? filteredRecords
 						.slice(start, end)
-						.map(({ row }, visibleIndex) =>
+						.map(({ row, sourceIndex }, visibleIndex) =>
 							renderWordEditorRow(
 								row,
 								listId,
-								start + visibleIndex
+								start + visibleIndex,
+								sourceIndex
 							)
 						)
 						.join('')
@@ -504,6 +521,43 @@ export function createListsUi(ctx) {
 			if (button.matches('[data-word-action]')) {
 				const word = button.dataset.word;
 				const action = button.dataset.wordAction;
+				if (action === 'remove-from-list') {
+					const sourceIndex = Number.parseInt(
+						button.dataset.rowIndex || '',
+						10
+					);
+					const sourceRow = state.customLists[listId]?.rows?.[sourceIndex];
+					if (!sourceRow) return;
+					const displayWord = rowScriptWord(sourceRow, state.settings) || word;
+					const listName = lists[listId]?.name || listId;
+					if (!confirm(`Remove ${displayWord} from ${listName}? Study progress will be kept.`))
+						return;
+
+					const removedRow = removeCustomListRowByIndex(
+						state,
+						lists,
+						listId,
+						sourceIndex
+					);
+					if (!removedRow) return;
+
+					syncVocabularyWithEnabledLists({ save: false });
+					const stillEnabled = (state.vocabulary[word]?.lists || []).some(
+						(id) => !!state.enabledLists[id] && !!lists[id]
+					);
+					if (!stillEnabled) clearExternalWordStudyState(word);
+					pruneStagedState();
+					saveState();
+					renderLists();
+					renderBlacklist();
+					renderProgress();
+					refreshStudyAfterExternalChange();
+					setText(
+						'#listEditorStatus',
+						`Removed ${displayWord} from ${listName}. Study progress was kept.`
+					);
+					return;
+				}
 				if (action === 'set-next')
 					setNextReviewFromControls(word, listId);
 				if (action === 'due-now') setWordDueNow(word, listId);
@@ -561,7 +615,7 @@ export function createListsUi(ctx) {
 	}
 
 
-	function renderWordEditorRow(row, listId, virtualIndex = null) {
+	function renderWordEditorRow(row, listId, virtualIndex = null, sourceIndex = null) {
 		const word = rowCanonicalWord(row);
 		const displayWord = rowScriptWord(row, state.settings) || word;
 		const studyable = canStudyWord(displayWord);
@@ -605,6 +659,10 @@ export function createListsUi(ctx) {
 					${scheduleActions}
 					<button type="button" data-word-action="reset" data-word="${escapeHtml(word)}"${disabled}>Reset</button>
 					<button type="button" data-word-action="blacklist" data-word="${escapeHtml(word)}"${disabled}>Blacklist</button>`;
+		const removeFromListAction =
+			state.customLists[listId] && Number.isInteger(sourceIndex)
+				? `<button type="button" data-word-action="remove-from-list" data-word="${escapeHtml(word)}" data-row-index="${sourceIndex}">Remove</button>`
+				: '';
 		const virtualIndexAttribute = Number.isInteger(virtualIndex)
 			? ` data-virtual-index="${virtualIndex}"`
 			: '';
@@ -636,6 +694,7 @@ export function createListsUi(ctx) {
 				<span class="word-stats-cell"><small>${attempts} attempts · ${pct} success</small></span>
 				<span class="word-actions">
 					${wordActions}
+					${removeFromListAction}
 				</span>
 			</div>
 		`;
