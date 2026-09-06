@@ -43,6 +43,7 @@ python -m http.server 8080
 ## Plans/Todo
 
 - find bugs
-- Also make a Japanese variant
+- ~~Also make a Japanese variant~~
 - ~~demonstration gifs on readme~~
 - ~~Get an instance working somewhere~~
+- make something to learn grammar
