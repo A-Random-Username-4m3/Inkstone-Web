@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'inkstone-static-';
-const CACHE_NAME = `${CACHE_PREFIX}a0.2.15.7-${dataRevision()}`;
+const CACHE_NAME = `${CACHE_PREFIX}a0.2.16-hanzi-learning-${dataRevision()}`;
 const CORE_ASSETS = [
 	'./',
 	'./index.html',
@@ -11,6 +11,8 @@ const CORE_ASSETS = [
 	'./js/constants.js',
 	'./js/fsrs.js',
 	'./js/practice-canvas.js',
+	'./js/learning-policy.js',
+	'./js/hanzi-mastery.js',
 	'./js/sample-data.js',
 	'./js/stroke-matcher.js',
 	'./js/lists-ui.js',

@@ -1,4 +1,6 @@
 import { REVIEW_STAGE_MAX } from './constants.js';
+import { dueHanziDrills, isTrackableHanzi } from './hanzi-mastery.js';
+import { rowScriptWord } from './script-mode.js';
 import {
 	getEntrySchedulerState,
 	isFsrsDue,
@@ -26,23 +28,60 @@ export function createSessionQueue(ctx) {
 			attemptResult: card.attemptResult ?? null,
 			forceSequential: !!card.forceSequential,
 			sawAgain: !!card.sawAgain,
+            hanzi: card.deck === 'hanzi' ? card.hanzi : null,
+            position: card.deck === 'hanzi' ? card.position : null,
+            scriptMode: card.scriptMode,
+            recordedHanzi: Array.isArray(card.recordedHanzi) ? card.recordedHanzi.slice() : [],
+            failedCharacters: Array.isArray(card.failedCharacters) ? card.failedCharacters.slice() : [],
 			delay: 0
 		};
 	}
 
 
 	function normalizeStageQueueItem(item) {
-		if (!item?.word || !isActiveStudyWord(item.word)) return null;
+        if (!item?.word || !isActiveStudyWord(item.word)) return null;
+        // Older saves can omit a deck; those were ordinary reviews.
+        const deck = item.deck || 'reviews';
+        if (!['adds', 'reviews', 'steps', 'hanzi'].includes(deck)) return null;
+        const savedStage = Number(item.stage);
+        const stage = Number.isFinite(savedStage)
+            ? clamp(Math.floor(savedStage), 1, REVIEW_STAGE_MAX) : 1;
+        const savedResult = item.attemptResult == null
+            ? null : Number(item.attemptResult);
+        if (savedResult !== null && (!Number.isInteger(savedResult) ||
+            savedResult < 0 || savedResult > 3)) return null;
+        // Keep the script that the learner started this staged attempt in.
+        // Otherwise switching modes can transfer a failure to another character.
+        const scriptMode = item.scriptMode === 'traditional' ? 'traditional' :
+            item.scriptMode === 'simplified' ? 'simplified' : state.settings?.scriptMode;
+        const written = Array.from(rowScriptWord(ctx.getEntryRow?.(item.word), scriptMode) || item.word);
+        if (deck === 'hanzi') {
+            if (!isTrackableHanzi(item.hanzi) ||
+                !ctx.getHanziPracticeCharacter(item.hanzi) ||
+                !written.includes(item.hanzi)) return null;
+        }
+        const practiced = deck === 'hanzi' ? [item.hanzi] : written;
 		return {
 			word: item.word,
-			deck: item.deck || 'reviews',
-			stage: clamp(Math.floor(item.stage || 1), 1, REVIEW_STAGE_MAX),
-			attemptResult:
-				item.attemptResult == null
-					? null
-					: clamp(Math.floor(item.attemptResult), 0, 3),
+			deck,
+			stage,
+			attemptResult: savedResult,
 			forceSequential: !!item.forceSequential,
 			sawAgain: !!item.sawAgain,
+            scriptMode,
+            hanzi: deck === 'hanzi' ? item.hanzi : null,
+            position: deck === 'hanzi'
+                ? (Number.isInteger(item.position) && written[item.position] === item.hanzi
+                    ? item.position : written.indexOf(item.hanzi)) : null,
+            recordedHanzi: Array.isArray(item.recordedHanzi)
+                ? [...new Set(item.recordedHanzi.filter((hanzi) =>
+                    isTrackableHanzi(hanzi) && practiced.includes(hanzi)))] : [],
+            failedCharacters: stage === REVIEW_STAGE_MAX
+                ? [...new Set((Array.isArray(item.failedCharacters)
+                    ? item.failedCharacters : []).filter((index) =>
+                    Number.isInteger(index) && index >= 0 &&
+                    index < practiced.length))]
+                : [],
 			delay: Math.max(0, Math.floor(Number(item.delay) || 0))
 		};
 	}
@@ -54,13 +93,15 @@ export function createSessionQueue(ctx) {
 			.map(normalizeStageQueueItem)
 			.filter(Boolean);
 		state.session.stageQueue = ctx.stagedQueue.slice();
-		if (
-			state.session.currentStageCard &&
-			!isActiveStudyWord(state.session.currentStageCard.word)
-		) {
-			state.session.currentStageCard = null;
-		}
-		const activeCard = stageItemFromCard(ctx.currentCard);
+		// Apply the same validation to the active saved card as queued cards.
+		// Otherwise a stale hanzi drill may be restored as an unfinishable
+		// exercise (or accidentally fall back to a whole-word review).
+		state.session.currentStageCard = normalizeStageQueueItem(
+			state.session.currentStageCard
+		);
+		const activeCard = normalizeStageQueueItem(
+            stageItemFromCard(ctx.currentCard)
+        );
 		if (activeCard) {
 			state.session.currentStageCard = activeCard;
 		} else if (ctx.currentCard && !activeCard) {
@@ -113,11 +154,12 @@ export function createSessionQueue(ctx) {
 
 
 	function stagedWorkCounts() {
-		const counts = { adds: 0, reviews: 0, steps: 0, total: 0 };
+		const counts = { adds: 0, reviews: 0, steps: 0, hanzi: 0, total: 0 };
 		const countItem = (item) => {
 			if (!item?.word || !isActiveStudyWord(item.word)) return;
 			counts.total += 1;
-			if (item.deck === 'adds') counts.adds += 1;
+			if (item.deck === 'hanzi') counts.hanzi += 1;
+			else if (item.deck === 'adds') counts.adds += 1;
 			else if (item.deck === 'steps') counts.steps += 1;
 			else counts.reviews += 1;
 		};
@@ -155,12 +197,23 @@ export function createSessionQueue(ctx) {
 			}
 		}
 
+        const blockedWords = new Set([
+            ...ctx.stagedQueue.map((item) => item.word),
+            ctx.currentCard?.word
+        ]);
+        const hanzi = dueHanziDrills(
+            state.hanziMastery, active,
+            (entry) => rowScriptWord(ctx.getEntryRow(entry.word), state.settings) || entry.word,
+            ctx.getHanziPracticeCharacter, t, blockedWords,
+            state.session.hanziReviewed || []
+        );
 		const orderedLearning = orderReviewItems(learning);
 		const orderedRelearning = orderReviewItems(relearning);
 		return {
 			active,
 			available,
 			newItems: orderNewItemsByListPosition(newItems),
+            hanzi,
 			learning: orderedLearning,
 			reviews: orderReviewItems(reviews),
 			relearning: orderedRelearning,
@@ -228,7 +281,9 @@ export function createSessionQueue(ctx) {
 				(counts.reviews || 0) -
 				(counts.steps || 0) -
 				staged.reviews -
-				staged.steps
+				staged.steps -
+                (counts.hanzi || 0) -
+                staged.hanzi
 		);
 		const steps = Math.min(sets.steps.length, reviewCapacity);
 		const reviews = Math.min(
@@ -239,24 +294,26 @@ export function createSessionQueue(ctx) {
 			0,
 			reviewCapacity - steps - reviews
 		);
+        const hanzi = Math.min(sets.hanzi.length, reviewRoomAfterDue);
 		const effectiveAddsLimit = state.settings.newCardsIgnoreReviewLimit
 			? addsLimit
-			: Math.min(addsLimit, reviewRoomAfterDue);
+			: Math.min(addsLimit, Math.max(0, reviewRoomAfterDue - hanzi));
 		const adds = Math.min(sets.newItems.length, effectiveAddsLimit);
 
 		const planned =
 			(counts.adds || 0) +
 			(counts.reviews || 0) +
 			(counts.steps || 0) +
+            (counts.hanzi || 0) +
 			staged.total +
 			adds +
 			reviews +
-			steps;
+			steps + hanzi;
 		const neededExtras = Math.max(0, (counts.minCards || 0) - planned);
 		const extras = neededExtras > 0
 			? Math.min(sets.extras.length, neededExtras)
 			: 0;
-		return { adds, reviews, extras, steps };
+		return { adds, reviews, extras, steps, hanzi };
 	}
 
 
@@ -310,6 +367,7 @@ export function createSessionQueue(ctx) {
 
 
 	function bucketCandidatesForDeck(deck, sets, left) {
+		if (deck === 'hanzi') return sets.hanzi.slice(0, left.hanzi);
 		if (deck === 'adds') return sets.newItems.slice(0, left.adds);
 		if (deck === 'reviews') return orderReviewItems(sets.reviews).slice(0, left.reviews);
 		if (deck === 'steps') return orderReviewItems(sets.steps).slice(0, left.steps);
@@ -328,6 +386,11 @@ export function createSessionQueue(ctx) {
 				word: (candidate) => candidate.item.word
 			});
 		}
+		if (left.hanzi > 0) {
+            buckets.push({ deck: 'hanzi',
+                candidates: bucketCandidatesForDeck('hanzi', sets, left),
+                word: (item) => item.word });
+        }
 		if (left.steps > 0) {
 			buckets.push({
 				deck: 'steps',
@@ -374,6 +437,7 @@ export function createSessionQueue(ctx) {
 
 
 	return {
+		normalizeStageQueueItem,
 		syncStageQueueToSession,
 		lastShownWord,
 		rememberShownWord,

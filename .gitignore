@@ -1,2 +1,4 @@
 devlogs.md
 *.patch
+test/
+docs/

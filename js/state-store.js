@@ -2,6 +2,7 @@ import { DEFAULT_STUDY_EXAMPLE_LIMIT } from './constants.js';
 import { normalizeScriptMode } from './script-mode.js';
 import { isValidParentLockRecord } from './parent-lock.js';
 import { isSafeRecordKey } from './record-keys.js';
+import { normalizeHanziMastery } from './hanzi-mastery.js';
 
 function isPlainObject(value) {
 	return (
@@ -78,6 +79,8 @@ export function createStateStore({
 			adds: 0,
 			reviews: 0,
 			steps: 0,
+			hanzi: 0,
+			hanziReviewed: [],
 			minCards: 0,
 			stageQueue: [],
 			currentStageCard: null,
@@ -116,6 +119,7 @@ export function createStateStore({
 		enabledLists: {},
 		customLists: {},
 		vocabulary: {},
+		hanziMastery: {},
 		blacklist: {},
 		session: freshSession(),
 		history: [],
@@ -152,6 +156,7 @@ export function createStateStore({
 		base.enabledLists = normalizeObject(base.enabledLists);
 		base.customLists = normalizeObject(base.customLists);
 		base.vocabulary = normalizeObject(base.vocabulary);
+		base.hanziMastery = normalizeHanziMastery(base.hanziMastery);
 		base.blacklist =
 			Array.isArray(base.blacklist) || isPlainObject(base.blacklist)
 				? base.blacklist
@@ -218,6 +223,10 @@ export function createStateStore({
 				...(base.session || {})
 			};
 			delete base.session.failures;
+            base.session.hanzi = Math.max(0, Math.floor(Number(base.session.hanzi) || 0));
+            base.session.hanziReviewed = Array.isArray(base.session.hanziReviewed)
+                ? [...new Set(base.session.hanziReviewed.filter((ch) =>
+                    typeof ch === 'string' && ch.length <= 2))] : [];
 		}
 		if ('blacklist' in base) {
 			base.blacklist = normalizeBlacklist(base.blacklist || {});

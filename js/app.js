@@ -21,6 +21,7 @@ import {
 	setEntrySchedulerState
 } from './fsrs.js';
 import { configurePracticeCanvas } from './practice-canvas.js';
+import { hanziMasterySummary } from './hanzi-mastery.js';
 import { createVocabulary } from './vocabulary.js';
 import { createSessionQueue } from './session-queue.js';
 import { createStudyFlow } from './study-flow.js';
@@ -33,7 +34,7 @@ import { createReviewLogStore } from './review-log-store.js';
 import { normalizeScriptMode, rowScriptWord } from './script-mode.js';
 import { migrateChineseStudyIds } from './chinese-card-id.js';
 
-const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
+const APP_VERSION = 'inkstone-static-2.12.0-learning-hanzi';
 	const STORAGE_KEY = 'inkstone.web.state.v1';
 	const NEXT_CARD_DELAY_MS = 650;
 	const STAGED_CARD_SPACING_TURNS = 1;
@@ -212,6 +213,7 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 			hanziReady = true;
 		},
 		get hanziReady() { return hanziReady; },
+        getHanziPracticeCharacter: (character) => hanzi[character] || null,
 		get lists() { return lists; },
 		set lists(value) { lists = value; },
 		get knownListIds() { return knownListIds; },
@@ -281,6 +283,7 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 		orderNewItemsByListPosition: (...args) => vocabularyApi.orderNewItemsByListPosition(...args),
 		firstNewByListPosition: (...args) => vocabularyApi.firstNewByListPosition(...args),
 		isActiveStudyWord: (...args) => vocabularyApi.isActiveStudyWord(...args),
+		normalizeStageQueueItem: (...args) => sessionQueueApi.normalizeStageQueueItem(...args),
 		syncStageQueueToSession: (...args) => sessionQueueApi.syncStageQueueToSession(...args),
 		clearCurrentStageCard: (...args) => sessionQueueApi.clearCurrentStageCard(...args),
 		pruneStagedState: (...args) => sessionQueueApi.pruneStagedState(...args),
@@ -447,7 +450,8 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 		renderCharProgress,
 		setFeedbackMessage,
 		playSound,
-		renderPenaltyStatus
+		renderPenaltyStatus,
+        saveAssessmentState: () => saveState()
 	});
 
 
@@ -573,11 +577,12 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 		bind('#btnClearProgress', 'click', async () => {
 			if (
 				!confirm(
-					'Clear vocabulary progress? Imported lists and settings will remain.'
+					'Clear vocabulary and hanzi progress? Imported lists and settings will remain.'
 				)
 			)
 				return;
 			state.vocabulary = {};
+            state.hanziMastery = {};
 			state.history = [];
 			const reviewLogsCleared = await clearAllReviewLogs();
 			state.fsrsOptimization = defaultState().fsrsOptimization;
@@ -665,19 +670,16 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 			if (lookupChar) lookupCharacter(lookupChar, { syncInput: false });
 		});
 		bind('#settingScriptMode', 'change', (e) => {
-			updateSetting('scriptMode', normalizeScriptMode(e.target.value));
-			syncVocabularyWithEnabledLists();
-			pruneStagedState();
-			if (currentCard) {
-				disposeTrainer();
-				currentCard = null;
-				clearCurrentStageCard();
-				syncStageQueueToSession();
-			}
-			renderLists();
-			renderProgress();
-			nextCard();
-		});
+            updateSetting('scriptMode', normalizeScriptMode(e.target.value));
+            syncVocabularyWithEnabledLists();
+            // Preserve the active assessment and its original script. Resetting
+            // it here used to allow a failed recall to disappear on mode change.
+            pruneStagedState();
+            renderLists();
+            renderProgress();
+            if (!currentCard) nextCard();
+            else setFeedbackMessage('Finish this card in its original script. New cards use your selected script.', 'info');
+        });
 		bind('#settingSessionHours', 'change', (e) =>
 			updateSetting(
 				'sessionHours',
@@ -826,6 +828,7 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 		const staged = stagedWorkCounts();
 		if (left.adds) parts.push(`${left.adds} new`);
 		if (left.reviews) parts.push(`${left.reviews} review due now`);
+		if (left.hanzi) parts.push(`${left.hanzi} hanzi reviews due`);
 		if (left.steps)
 			parts.push(`${left.steps} learning steps due`);
 		if (left.extras) parts.push(`${left.extras} extra`);
@@ -834,6 +837,15 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 				`${staged.total} staged review${staged.total === 1 ? '' : 's'}`
 			);
 
+        const activeCharacters = new Set(sets.active.flatMap((entry) =>
+            Array.from(rowScriptWord(getEntryRow(entry.word), state.settings) || entry.word)));
+        const nextHanzi = Object.values(state.hanziMastery || {})
+            .filter((entry) => activeCharacters.has(entry.hanzi) &&
+                Number(entry.next || 0) > now())
+            .sort((a, b) => a.next - b.next)[0];
+        if (nextHanzi) {
+            parts.push(`Next hanzi: ${nextHanzi.hanzi} ${formatClockDuration(nextHanzi.next - now())} away`);
+        }
 		const next = getNextScheduledReview(sets);
 		if (next) {
 			const wait = Math.max(0, (next.next || 0) - now());
@@ -841,7 +853,7 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 			parts.push(
 				`Next review: ${displayWord} in ${formatClockDuration(wait)}`
 			);
-		} else if (!left.reviews && !left.steps && !staged.total) {
+		} else if (!left.reviews && !left.steps && !left.hanzi && !staged.total) {
 			parts.push(
 				sets.active.length
 					? 'No scheduled reviews waiting'
@@ -866,7 +878,7 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 		const timeLeft = formatDuration(getSessionTimeLeft(), true);
 		const staged = stagedWorkCounts();
 		const plannedCount =
-			left.adds + left.reviews + left.extras + left.steps + staged.total;
+			left.adds + left.reviews + left.extras + left.steps + left.hanzi + staged.total;
 		const stagedText = staged.total
 			? ` · ${staged.total} staged`
 			: '';
@@ -878,7 +890,7 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 		if ($('#sessionTimeLeft')) $('#sessionTimeLeft').textContent = text;
 		if ($('#sessionRemainder'))
 			$('#sessionRemainder').textContent =
-				`Available now: ${left.adds} new · ${left.reviews} review · ${left.extras} extra · ${left.steps} step`;
+				`Available now: ${left.adds} new · ${left.reviews} review · ${left.hanzi} hanzi · ${left.extras} extra · ${left.steps} step`;
 		if ($('#dueSummary'))
 			$('#dueSummary').textContent = formatDueSummary(sets, left);
 		
@@ -890,15 +902,52 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 	}
 
 
+
+    function renderHanziMasteryList(active) {
+        const container = $('#hanziMasteryList');
+        if (!container) return;
+        container.replaceChildren();
+        const activeHanzi = new Set(active.flatMap((entry) =>
+            Array.from(rowScriptWord(getEntryRow(entry.word), state.settings) || entry.word)));
+        const rows = Object.values(state.hanziMastery || {})
+            .filter((entry) => activeHanzi.has(entry.hanzi) && entry.attempts)
+            .sort((a, b) => (a.next || 0) - (b.next || 0))
+            .slice(0, 60);
+        if (!rows.length) {
+            container.textContent = 'No hanzi tested yet. Finish an unaided writing stage to start tracking them.';
+            return;
+        }
+        for (const entry of rows) {
+            const row = document.createElement('div');
+            row.className = 'hanzi-mastery-row';
+            const hanzi = document.createElement('strong');
+            hanzi.textContent = entry.hanzi;
+            const success = document.createElement('span');
+            success.textContent = `${entry.successes}/${entry.attempts} recalled`;
+            const stability = document.createElement('span');
+            stability.textContent = `${Number(entry.fsrs?.stability || 0).toFixed(1)}d stability`;
+            const due = document.createElement('span');
+            due.textContent = formatRelativeDue((entry.next || 0) - now());
+            row.append(hanzi, success, stability, due);
+            container.appendChild(row);
+        }
+    }
+
 	function renderProgress(
 		sets = getDueSets(),
 		left = getRemainder(sets)
 	) {
-		const mastered = sets.active.filter((x) => isMasteredEntry(x)).length;
+        const mastered = sets.active.filter((x) => isMasteredEntry(x)).length;
+        const hanzi = hanziMasterySummary(state.hanziMastery, sets.active,
+            (entry) => rowScriptWord(getEntryRow(entry.word), state.settings) || entry.word, now());
 		const stats = [
 			[sets.active.length, 'active words'],
 			[left.adds, 'new left'],
 			[left.reviews, 'reviews left'],
+            [left.hanzi, 'hanzi drills left'],
+            [hanzi.studied, 'hanzi tested'],
+            [hanzi.strong, 'strong hanzi recall'],
+            [hanzi.due, 'hanzi independently due'],
 			[left.extras, 'extra left'],
 			[left.steps, 'learning steps due'],
 			[formatDuration(getSessionTimeLeft(), true), 'session time left'],
@@ -920,6 +969,7 @@ const APP_VERSION = 'inkstone-static-2.11.0-audio-implementation';
 				grid.appendChild(node);
 			}
 		}
+		renderHanziMasteryList(sets.active);
 		renderSessionStatus(sets, left);
 	}
 

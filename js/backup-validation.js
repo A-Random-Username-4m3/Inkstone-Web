@@ -1,5 +1,6 @@
 import { isValidParentLockRecord } from './parent-lock.js';
 import { isSafeRecordKey } from './record-keys.js';
+import { isTrackableHanzi } from './hanzi-mastery.js';
 
 function isPlainObject(value) {
 	return (
@@ -120,6 +121,28 @@ function validateVocabulary(vocabulary) {
 	}
 }
 
+function validateHanziMastery(mastery) {
+    requirePlainObject(mastery, 'state.hanziMastery');
+    for (const [hanzi, entry] of Object.entries(mastery)) {
+        if (!isTrackableHanzi(hanzi)) {
+            throw new Error(`Invalid hanzi mastery key: ${hanzi}`);
+        }
+        const path = `state.hanziMastery.${hanzi}`;
+        requirePlainObject(entry, path);
+        if (entry.hanzi !== undefined && entry.hanzi !== hanzi) {
+            throw new Error(`${path}.hanzi must match its key.`);
+        }
+        for (const field of ['attempts', 'successes', 'last', 'next']) {
+            validateOptionalFiniteNumber(entry[field], `${path}.${field}`, {
+                nullable: field === 'last' || field === 'next'
+            });
+        }
+        if (entry.fsrs !== undefined) {
+            requirePlainObject(entry.fsrs, `${path}.fsrs`);
+        }
+    }
+}
+
 function validateReviewLog(log, index) {
 	const path = `state.reviewLogs[${index}]`;
 	requirePlainObject(log, path);
@@ -151,6 +174,7 @@ export function validateBackupPayload(payload) {
 		'enabledLists',
 		'customLists',
 		'vocabulary',
+		'hanziMastery',
 		'session',
 		'fsrsOptimization'
 	];
@@ -195,6 +219,9 @@ export function validateBackupPayload(payload) {
 	}
 	if (sourceState.vocabulary !== undefined) {
 		validateVocabulary(sourceState.vocabulary);
+	}
+	if (sourceState.hanziMastery !== undefined) {
+		validateHanziMastery(sourceState.hanziMastery);
 	}
 
 	const hasReviewLogs = Object.prototype.hasOwnProperty.call(
