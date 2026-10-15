@@ -41,10 +41,10 @@ export function createVocabulary(ctx) {
 	}
 
 
-	function isActiveStudyWord(word) {
+	function isActiveStudyWord(word, scriptMode = state.settings.scriptMode) {
 		const dataReady = ctx.hanziReady;
 		const row = getEntryRow(word);
-		const studyWord = rowScriptWord(row, state.settings) || word;
+		const studyWord = rowScriptWord(row, scriptMode) || word;
 		return (
 			!!word &&
 			!state.blacklist[word] &&

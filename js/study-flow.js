@@ -294,7 +294,7 @@ export function createStudyFlow(ctx) {
 			else ctx.stagedQueue.splice(candidate.index, 1);
 			const queued = candidate.item;
 			const queuedEntry = state.vocabulary[queued.word];
-			if (!queuedEntry || !isActiveStudyWord(queued.word)) {
+			if (!queuedEntry || !isActiveStudyWord(queued.word, queued.scriptMode)) {
 				syncStageQueueToSession();
 				candidates = getQueuedStageCandidates({ readyOnly });
 				continue;

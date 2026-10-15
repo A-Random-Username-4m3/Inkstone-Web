@@ -20,7 +20,7 @@ export function createSessionQueue(ctx) {
 	const getActiveVocabulary = (...args) => ctx.getActiveVocabulary(...args);
 	const orderNewItemsByListPosition = (...args) => ctx.orderNewItemsByListPosition(...args);
 	function stageItemFromCard(card = ctx.currentCard) {
-		if (!card?.word || !isActiveStudyWord(card.word)) return null;
+		if (!card?.word || !isActiveStudyWord(card.word, card.scriptMode)) return null;
 		return {
 			word: card.word,
 			deck: card.deck,
@@ -39,7 +39,7 @@ export function createSessionQueue(ctx) {
 
 
 	function normalizeStageQueueItem(item) {
-        if (!item?.word || !isActiveStudyWord(item.word)) return null;
+        if (!item?.word || !isActiveStudyWord(item.word, item.scriptMode)) return null;
         // Older saves can omit a deck; those were ordinary reviews.
         const deck = item.deck || 'reviews';
         if (!['adds', 'reviews', 'steps', 'hanzi'].includes(deck)) return null;
@@ -131,7 +131,8 @@ export function createSessionQueue(ctx) {
 		ctx.stagedQueue = ctx.stagedQueue
 			.map(normalizeStageQueueItem)
 			.filter(Boolean);
-		if (ctx.currentCard && !isActiveStudyWord(ctx.currentCard.word)) {
+		if (ctx.currentCard && !isActiveStudyWord(
+		ctx.currentCard.word, ctx.currentCard.scriptMode)) {
 			disposeTrainer();
 			ctx.currentCard = null;
 		}
@@ -156,7 +157,7 @@ export function createSessionQueue(ctx) {
 	function stagedWorkCounts() {
 		const counts = { adds: 0, reviews: 0, steps: 0, hanzi: 0, total: 0 };
 		const countItem = (item) => {
-			if (!item?.word || !isActiveStudyWord(item.word)) return;
+			if (!item?.word || !isActiveStudyWord(item.word, item.scriptMode)) return;
 			counts.total += 1;
 			if (item.deck === 'hanzi') counts.hanzi += 1;
 			else if (item.deck === 'adds') counts.adds += 1;
@@ -236,7 +237,7 @@ export function createSessionQueue(ctx) {
 				: state.session?.currentStageCard;
 			const hasCurrentStageCard = Boolean(
 				savedCurrentStageCard?.word &&
-				isActiveStudyWord(savedCurrentStageCard.word)
+				isActiveStudyWord(savedCurrentStageCard.word, savedCurrentStageCard.scriptMode)
 			);
 				const preservedQueue = ctx.stagedQueue
 				.map(normalizeStageQueueItem)
