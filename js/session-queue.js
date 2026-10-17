@@ -33,6 +33,10 @@ export function createSessionQueue(ctx) {
             scriptMode: card.scriptMode,
             recordedHanzi: Array.isArray(card.recordedHanzi) ? card.recordedHanzi.slice() : [],
             failedCharacters: Array.isArray(card.failedCharacters) ? card.failedCharacters.slice() : [],
+            fastTrackCandidates: card.fastTrackCandidates || [],
+            fastTrackReady: card.fastTrackReady || [],
+            fastTrackRejected: card.fastTrackRejected || [],
+            fastTrackFailures: card.fastTrackFailures || [],
 			delay: 0
 		};
 	}
@@ -61,6 +65,15 @@ export function createSessionQueue(ctx) {
                 !written.includes(item.hanzi)) return null;
         }
         const practiced = deck === 'hanzi' ? [item.hanzi] : written;
+        const validPositions = (indices) => [...new Set((Array.isArray(indices)
+            ? indices : []).filter((index) => Number.isInteger(index) &&
+            index >= 0 && index < practiced.length))];
+        const candidates = deck === 'adds' ? validPositions(item.fastTrackCandidates)
+            .filter((index) => isTrackableHanzi(practiced[index])) : [];
+        const rejected = validPositions(item.fastTrackRejected)
+            .filter((index) => candidates.includes(index));
+        const ready = validPositions(item.fastTrackReady)
+            .filter((index) => candidates.includes(index) && !rejected.includes(index));
 		return {
 			word: item.word,
 			deck,
@@ -76,12 +89,14 @@ export function createSessionQueue(ctx) {
             recordedHanzi: Array.isArray(item.recordedHanzi)
                 ? [...new Set(item.recordedHanzi.filter((hanzi) =>
                     isTrackableHanzi(hanzi) && practiced.includes(hanzi)))] : [],
-            failedCharacters: stage === REVIEW_STAGE_MAX
-                ? [...new Set((Array.isArray(item.failedCharacters)
-                    ? item.failedCharacters : []).filter((index) =>
-                    Number.isInteger(index) && index >= 0 &&
-                    index < practiced.length))]
-                : [],
+            // An accelerated Hanzi can be tested unaided before word Stage 5.
+            // Its failure evidence must survive a skip or reload at any stage.
+            failedCharacters: validPositions(item.failedCharacters),
+            fastTrackCandidates: candidates,
+            fastTrackReady: ready,
+            fastTrackRejected: rejected,
+            fastTrackFailures: validPositions(item.fastTrackFailures)
+                .filter((index) => candidates.includes(index)),
 			delay: Math.max(0, Math.floor(Number(item.delay) || 0))
 		};
 	}
